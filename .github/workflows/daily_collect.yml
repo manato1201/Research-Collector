@@ -28,6 +28,14 @@ jobs:
         run: |
           pip install feedparser requests python-dotenv
           pip install "notebooklm-py"
+      
+      # ── 環境変数デバッグ確認 ────────────────────────────────
+      - name: Debug auth env
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          echo "AUTH_JSON length: ${#NOTEBOOKLM_AUTH_JSON}"
+          echo "AUTH_JSON first 20 chars: ${NOTEBOOKLM_AUTH_JSON:0:20}"
 
       # ── 認証チェック ────────────────────────────────────────
       - name: Check auth
