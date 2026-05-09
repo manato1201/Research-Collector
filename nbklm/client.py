@@ -1,6 +1,7 @@
 """
 notebooklm-py ラッパー
-research-collector から呼び出す NotebookLM 操作をまとめたモジュール
+週次ノートブック自動作成・重複チェック対応版
+1ノートブック上限300件（NotebookLM Plus）を考慮した設計
 """
 
 import asyncio
@@ -13,7 +14,11 @@ from typing import Optional
 
 from notebooklm import NotebookLMClient
 
-from .notebook_ids import NOTEBOOK_IDS, SOURCE_TYPE_TO_NOTEBOOKS
+from .notebook_ids import (
+    NOTEBOOK_IDS_FIXED,
+    SOURCE_TYPE_TO_CATEGORIES,
+    CATEGORY_TO_NOTEBOOK_NAME,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,6 @@ async def _make_client() -> NotebookLMClient:
         tmp.write(auth_json)
         tmp.flush()
         tmp.close()
-
         return await NotebookLMClient.from_storage(path=tmp.name)
     else:
         logger.info("[NotebookLM] using default storage_state.json")
@@ -46,37 +50,96 @@ async def _make_client() -> NotebookLMClient:
 
 
 # ------------------------------------------------------------------ #
-#  内部ヘルパー
+#  週次ノートブック管理
 # ------------------------------------------------------------------ #
 
-def _get_notebook_ids(source_type: str) -> list[str]:
-    """source_type から追加先ノートブックIDのリストを返す"""
-    keys = SOURCE_TYPE_TO_NOTEBOOKS.get(source_type, ["game_dev_tech"])
-    return [NOTEBOOK_IDS[k] for k in keys]
+# カテゴリ → 当週ノートブックIDのキャッシュ（実行内で使いまわす）
+_weekly_nb_cache: dict[str, str] = {}
+
+
+def _weekly_label() -> tuple[str, str]:
+    """
+    現在の年・週番号を返す。
+    例: ('2026', 'W20')
+    """
+    now = datetime.now()
+    year, week, _ = now.isocalendar()
+    return str(year), f"W{week:02d}"
+
+
+def _weekly_name(category: str, year: str, week: str) -> str:
+    """例: 'game_dev_tech', '2026', 'W20' → 'Game-Dev-Tech-2026-W20'"""
+    tpl = CATEGORY_TO_NOTEBOOK_NAME.get(category, "Research-{YYYY}-{WNN}")
+    return tpl.replace("{YYYY}", year).replace("{WNN}", week)
+
+
+async def _get_or_create_weekly_notebook(
+    client: NotebookLMClient,
+    category: str,
+    year: str,
+    week: str,
+) -> str:
+    """
+    当週のノートブックIDを返す。
+    存在しなければ新規作成してIDを返す。
+    """
+    cache_key = f"{category}:{year}:{week}"
+    if cache_key in _weekly_nb_cache:
+        return _weekly_nb_cache[cache_key]
+
+    target_name = _weekly_name(category, year, week)
+
+    # 既存ノートブック一覧から検索
+    notebooks = await client.notebooks.list()
+    for nb in notebooks:
+        if nb.title == target_name:
+            logger.info(
+                f"[NotebookLM] found existing: {target_name} ({nb.id[:8]}...)"
+            )
+            _weekly_nb_cache[cache_key] = nb.id
+            return nb.id
+
+    # 存在しなければ新規作成
+    logger.info(f"[NotebookLM] creating new notebook: {target_name}")
+    new_nb = await client.notebooks.create(title=target_name)
+    logger.info(f"[NotebookLM] created: {target_name} ({new_nb.id[:8]}...)")
+    _weekly_nb_cache[cache_key] = new_nb.id
+    return new_nb.id
 
 
 # ------------------------------------------------------------------ #
-#  記事URLの一括追加（複数ノートブック対応）
+#  記事URLの一括追加
 # ------------------------------------------------------------------ #
 
 async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
+    """
+    収集した記事を当週のノートブックへ追加する。
+    source_typeが複数カテゴリに対応する場合は全カテゴリに追加。
+    """
     result = {"ok": 0, "skip": 0, "errors": []}
+    year, week = _weekly_label()
 
     async with await _make_client() as client:
         for article in articles:
             url = article.get("url", "")
             source_type = article.get("source_type", "zenn")
-            nb_ids = _get_notebook_ids(source_type)
+            categories = SOURCE_TYPE_TO_CATEGORIES.get(
+                source_type, ["game_dev_tech"]
+            )
 
-            for nb_id in nb_ids:
+            for category in categories:
+                nb_id = await _get_or_create_weekly_notebook(
+                    client, category, year, week
+                )
+                nb_name = _weekly_name(category, year, week)
                 try:
                     await client.sources.add_url(nb_id, url, wait=False)
                     logger.info(
-                        f"[NotebookLM] added to {nb_id[:8]}...: {url[:60]}"
+                        f"[NotebookLM] added to {nb_name}: {url[:60]}"
                     )
                     result["ok"] += 1
                 except Exception as e:
-                    msg = f"{url[:50]} → {nb_id[:8]}... → {e}"
+                    msg = f"{url[:50]} → {nb_name} → {e}"
                     logger.warning(f"[NotebookLM] skip: {msg}")
                     result["skip"] += 1
                     result["errors"].append(msg)
@@ -93,8 +156,11 @@ def add_articles(articles: list[dict]) -> dict:
 # ------------------------------------------------------------------ #
 
 async def add_paper_async(pdf_path: str, title: Optional[str] = None) -> bool:
-    nb_id = NOTEBOOK_IDS["software_engineering"]
+    year, week = _weekly_label()
     async with await _make_client() as client:
+        nb_id = await _get_or_create_weekly_notebook(
+            client, "software_engineering", year, week
+        )
         try:
             await client.sources.add_file(nb_id, pdf_path, wait=False)
             logger.info(f"[NotebookLM] paper added: {pdf_path}")
@@ -141,10 +207,11 @@ WEEKLY_RESEARCH_QUERIES = [
 
 
 async def generate_weekly_digest_async() -> Optional[str]:
-    nb_id = NOTEBOOK_IDS["weekly_digest"]
+    nb_id = NOTEBOOK_IDS_FIXED["weekly_digest"]
 
     async with await _make_client() as client:
-        week_num = datetime.now().isocalendar()[1]
+        year, week = _weekly_label()
+        week_num = int(week[1:])
         query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
         logger.info(f"[NotebookLM] Deep Research: {query}")
 
@@ -166,13 +233,13 @@ async def generate_weekly_digest_async() -> Optional[str]:
                 instructions=WEEKLY_DIGEST_PROMPT,
             )
             await client.artifacts.wait_for_completion(nb_id, status.task_id)
-
             report_md = await client.artifacts.download_report(
                 nb_id, format="markdown"
             )
-            logger.info(f"[NotebookLM] report generated ({len(report_md)} chars)")
+            logger.info(
+                f"[NotebookLM] report generated ({len(report_md)} chars)"
+            )
             return report_md
-
         except Exception as e:
             logger.error(f"[NotebookLM] report generation failed: {e}")
             return None
@@ -190,7 +257,9 @@ async def check_auth_async() -> bool:
     try:
         async with await _make_client() as client:
             notebooks = await client.notebooks.list()
-            logger.info(f"[NotebookLM] auth OK ({len(notebooks)} notebooks)")
+            logger.info(
+                f"[NotebookLM] auth OK ({len(notebooks)} notebooks)"
+            )
             return True
     except Exception as e:
         logger.error(f"[NotebookLM] auth FAILED: {e}")

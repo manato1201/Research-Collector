@@ -48,40 +48,39 @@ def run_daily():
 
     all_articles = []
 
-    # 2. Zenn / Qiita
+    # 2. Zenn / Qiita（5件/フィード × 11フィード = 最大55件）
     try:
         from collectors.zenn_qiita_collector import collect as collect_zenn_qiita
-        articles = collect_zenn_qiita(max_per_feed=20)
+        articles = collect_zenn_qiita(max_per_feed=5)
         all_articles.extend(articles)
         logger.info(f"Zenn/Qiita: {len(articles)} articles")
     except Exception as e:
         logger.error(f"Zenn/Qiita collect failed: {e}")
 
-    # 3. Unity / UE 公式ブログ
+    # 3. Unity / UE 公式ブログ（5件/フィード × 4フィード = 最大20件）
     try:
         from collectors.unity_ue_collector import collect as collect_unity_ue
-        articles = collect_unity_ue(max_per_feed=10)
+        articles = collect_unity_ue(max_per_feed=5)
         all_articles.extend(articles)
         logger.info(f"Unity/UE: {len(articles)} articles")
     except Exception as e:
         logger.error(f"Unity/UE collect failed: {e}")
 
-    # 4. CEDEC（CEDiL新着 + YouTube）
+    # 4. CEDEC（CEDiL:15件 + YouTube:10件 = 最大25件）
     try:
         from collectors.cedec_collector import collect as collect_cedec
-        articles = collect_cedec(max_cedil=30, max_youtube=20)
+        articles = collect_cedec(max_cedil=15, max_youtube=10)
         all_articles.extend(articles)
         logger.info(f"CEDEC: {len(articles)} items")
     except Exception as e:
         logger.error(f"CEDEC collect failed: {e}")
 
-    # 5. 論文（arXiv + Semantic Scholar）
-    # 毎日ではなく週2回（月・木）のみ実行（APIレート制限対策）
+    # 5. 論文（月・木のみ / 3件/クエリ × 17クエリ = 最大51件）
     weekday = datetime.now().weekday()  # 0=月, 3=木
     if weekday in (0, 3):
         try:
             from collectors.paper_collector import collect as collect_papers
-            articles = collect_papers(max_arxiv=5, max_semantic=5)
+            articles = collect_papers(max_arxiv=3, max_semantic=3)
             all_articles.extend(articles)
             logger.info(f"Papers: {len(articles)} papers")
         except Exception as e:
@@ -95,19 +94,30 @@ def run_daily():
         logger.warning("No articles collected. Exiting.")
         return
 
-    # 6. 重複除去
-    seen = set()
-    unique_articles = []
+    # 6. 同一実行内の重複除去
+    seen_hash = set()
+    deduped = []
     for a in all_articles:
         h = a.get("url_hash", a["url"])
-        if h not in seen:
-            seen.add(h)
-            unique_articles.append(a)
-    logger.info(f"After dedup: {len(unique_articles)} articles")
+        if h not in seen_hash:
+            seen_hash.add(h)
+            deduped.append(a)
+    logger.info(f"After in-run dedup: {len(deduped)} articles")
 
-    # 7. NotebookLM へ追加
+    # 7. 過去実行分との重複チェック（seen_urls.txt）
+    from nbklm.seen_urls import filter_new_articles, save_seen
+    new_articles, updated_seen = filter_new_articles(deduped)
+
+    if not new_articles:
+        logger.info("All articles already seen. Nothing to add.")
+        # seen_urls.txt は変更なし
+        return
+
+    logger.info(f"New articles to add: {len(new_articles)}")
+
+    # 8. NotebookLM へ追加（週次ノートブックへ自動振り分け）
     from nbklm import add_articles
-    result = add_articles(unique_articles)
+    result = add_articles(new_articles)
     logger.info(
         f"NotebookLM: ok={result['ok']}, skip={result['skip']}, "
         f"errors={len(result['errors'])}"
@@ -116,8 +126,11 @@ def run_daily():
         for err in result["errors"][:5]:
             logger.warning(f"  - {err}")
 
-    # 8. Notion へ保存（任意）
-    _save_to_notion(unique_articles)
+    # 9. seen_urls.txt を更新して永続化
+    save_seen(updated_seen)
+
+    # 10. Notion へ保存（任意）
+    _save_to_notion(new_articles)
 
     logger.info("=== Daily Collect Done ===")
 
@@ -157,7 +170,6 @@ def run_weekly():
     logger.info(f"Saved: {output_path} ({len(report_md)} chars)")
 
     _save_digest_to_notion(report_md, date_str)
-
     logger.info("=== Weekly Digest Done ===")
 
 
