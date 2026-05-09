@@ -13,7 +13,7 @@ from typing import Optional
 
 from notebooklm import NotebookLMClient
 
-from .notebook_ids import NOTEBOOK_IDS, SOURCE_TYPE_TO_NOTEBOOK
+from .notebook_ids import NOTEBOOK_IDS, SOURCE_TYPE_TO_NOTEBOOKS
 
 logger = logging.getLogger(__name__)
 
@@ -23,17 +23,11 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------ #
 
 async def _make_client() -> NotebookLMClient:
-    """
-    NOTEBOOKLM_AUTH_JSON 環境変数があればそれを使い、
-    なければデフォルトの storage_state.json を使う。
-    """
     auth_json = os.environ.get("NOTEBOOKLM_AUTH_JSON", "").strip()
 
     if auth_json:
-        # 環境変数から一時ファイルに書き出して from_storage() に渡す
         logger.info("[NotebookLM] using NOTEBOOKLM_AUTH_JSON env var")
         try:
-            # JSON として valid か確認
             json.loads(auth_json)
         except json.JSONDecodeError as e:
             raise ValueError(f"NOTEBOOKLM_AUTH_JSON is not valid JSON: {e}")
@@ -45,8 +39,7 @@ async def _make_client() -> NotebookLMClient:
         tmp.flush()
         tmp.close()
 
-        client = await NotebookLMClient.from_storage(path=tmp.name)
-        return client
+        return await NotebookLMClient.from_storage(path=tmp.name)
     else:
         logger.info("[NotebookLM] using default storage_state.json")
         return await NotebookLMClient.from_storage()
@@ -56,13 +49,14 @@ async def _make_client() -> NotebookLMClient:
 #  内部ヘルパー
 # ------------------------------------------------------------------ #
 
-def _get_notebook_id(source_type: str) -> str:
-    key = SOURCE_TYPE_TO_NOTEBOOK.get(source_type, "game_dev_tech")
-    return NOTEBOOK_IDS[key]
+def _get_notebook_ids(source_type: str) -> list[str]:
+    """source_type から追加先ノートブックIDのリストを返す"""
+    keys = SOURCE_TYPE_TO_NOTEBOOKS.get(source_type, ["game_dev_tech"])
+    return [NOTEBOOK_IDS[k] for k in keys]
 
 
 # ------------------------------------------------------------------ #
-#  記事URLの一括追加
+#  記事URLの一括追加（複数ノートブック対応）
 # ------------------------------------------------------------------ #
 
 async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
@@ -72,17 +66,20 @@ async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
         for article in articles:
             url = article.get("url", "")
             source_type = article.get("source_type", "zenn")
-            nb_id = _get_notebook_id(source_type)
+            nb_ids = _get_notebook_ids(source_type)
 
-            try:
-                await client.sources.add_url(nb_id, url, wait=False)
-                logger.info(f"[NotebookLM] added: {url[:80]}")
-                result["ok"] += 1
-            except Exception as e:
-                msg = f"{url[:60]} → {e}"
-                logger.warning(f"[NotebookLM] skip: {msg}")
-                result["skip"] += 1
-                result["errors"].append(msg)
+            for nb_id in nb_ids:
+                try:
+                    await client.sources.add_url(nb_id, url, wait=False)
+                    logger.info(
+                        f"[NotebookLM] added to {nb_id[:8]}...: {url[:60]}"
+                    )
+                    result["ok"] += 1
+                except Exception as e:
+                    msg = f"{url[:50]} → {nb_id[:8]}... → {e}"
+                    logger.warning(f"[NotebookLM] skip: {msg}")
+                    result["skip"] += 1
+                    result["errors"].append(msg)
 
     return result
 
