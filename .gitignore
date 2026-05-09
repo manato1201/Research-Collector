@@ -46,3 +46,6 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# seen_urls.txt はローカル・Actions実行環境のみで管理
+seen_urls.txt
