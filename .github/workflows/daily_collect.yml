@@ -4,38 +4,29 @@ on:
   schedule:
     # JST 6:00 = UTC 21:00（前日）
     - cron: '0 21 * * *'
-  workflow_dispatch:  # 手動実行可能
+  workflow_dispatch:
 
 jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write  # seen_urls.txt をコミットするために必要
 
     steps:
-      # ── リポジトリ取得 ──────────────────────────────────────
       - name: Checkout
         uses: actions/checkout@v4
 
-      # ── Python セットアップ ─────────────────────────────────
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
 
-      # ── 依存関係インストール ────────────────────────────────
       - name: Install dependencies
         run: |
           pip install feedparser requests python-dotenv
           pip install "notebooklm-py"
-      
-      # ── 環境変数デバッグ確認 ────────────────────────────────
-      - name: Debug auth env
-        env:
-          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
-        run: |
-          echo "AUTH_JSON length: ${#NOTEBOOKLM_AUTH_JSON}"
-          echo "AUTH_JSON first 20 chars: ${NOTEBOOKLM_AUTH_JSON:0:20}"
 
       # ── 認証チェック ────────────────────────────────────────
       - name: Check auth
@@ -51,7 +42,16 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py --mode daily
 
-      # ── ログを artifacts として保存（デバッグ用）───────────
+      # ── seen_urls.txt をコミットして永続化 ─────────────────
+      - name: Commit seen_urls.txt
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add seen_urls.txt
+          git diff --cached --quiet || git commit -m "chore: update seen_urls.txt [skip ci]"
+          git push
+
+      # ── ログを artifacts として保存 ─────────────────────────
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4
