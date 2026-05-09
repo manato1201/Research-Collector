@@ -46,9 +46,9 @@ def run_daily():
         logger.error("Auth failed. Aborting.")
         sys.exit(1)
 
-    # 2. 記事収集
     all_articles = []
 
+    # 2. Zenn / Qiita
     try:
         from collectors.zenn_qiita_collector import collect as collect_zenn_qiita
         articles = collect_zenn_qiita(max_per_feed=20)
@@ -57,6 +57,7 @@ def run_daily():
     except Exception as e:
         logger.error(f"Zenn/Qiita collect failed: {e}")
 
+    # 3. Unity / UE 公式ブログ
     try:
         from collectors.unity_ue_collector import collect as collect_unity_ue
         articles = collect_unity_ue(max_per_feed=10)
@@ -65,13 +66,36 @@ def run_daily():
     except Exception as e:
         logger.error(f"Unity/UE collect failed: {e}")
 
-    logger.info(f"Total articles: {len(all_articles)}")
+    # 4. CEDEC（CEDiL新着 + YouTube）
+    try:
+        from collectors.cedec_collector import collect as collect_cedec
+        articles = collect_cedec(max_cedil=30, max_youtube=20)
+        all_articles.extend(articles)
+        logger.info(f"CEDEC: {len(articles)} items")
+    except Exception as e:
+        logger.error(f"CEDEC collect failed: {e}")
+
+    # 5. 論文（arXiv + Semantic Scholar）
+    # 毎日ではなく週2回（月・木）のみ実行（APIレート制限対策）
+    weekday = datetime.now().weekday()  # 0=月, 3=木
+    if weekday in (0, 3):
+        try:
+            from collectors.paper_collector import collect as collect_papers
+            articles = collect_papers(max_arxiv=5, max_semantic=5)
+            all_articles.extend(articles)
+            logger.info(f"Papers: {len(articles)} papers")
+        except Exception as e:
+            logger.error(f"Paper collect failed: {e}")
+    else:
+        logger.info("Papers: skipped (runs Mon/Thu only)")
+
+    logger.info(f"Total collected: {len(all_articles)}")
 
     if not all_articles:
         logger.warning("No articles collected. Exiting.")
         return
 
-    # 3. 重複除去（url_hash ベース）
+    # 6. 重複除去
     seen = set()
     unique_articles = []
     for a in all_articles:
@@ -81,7 +105,7 @@ def run_daily():
             unique_articles.append(a)
     logger.info(f"After dedup: {len(unique_articles)} articles")
 
-    # 4. NotebookLM へ追加
+    # 7. NotebookLM へ追加
     from nbklm import add_articles
     result = add_articles(unique_articles)
     logger.info(
@@ -92,14 +116,13 @@ def run_daily():
         for err in result["errors"][:5]:
             logger.warning(f"  - {err}")
 
-    # 5. Notion へ保存（既存パイプラインがあれば呼び出す）
+    # 8. Notion へ保存（任意）
     _save_to_notion(unique_articles)
 
     logger.info("=== Daily Collect Done ===")
 
 
 def _save_to_notion(articles: list[dict]):
-    """既存の Notion クライアントがあれば呼び出す（なければスキップ）"""
     try:
         from notion.client import save_articles
         saved = save_articles(articles)
@@ -125,7 +148,6 @@ def run_weekly():
         logger.error("Weekly digest generation failed.")
         sys.exit(1)
 
-    # ローカルに保存
     date_str = datetime.now().strftime("%Y-%m-%d")
     output_path = f"output/weekly_digest_{date_str}.md"
     os.makedirs("output", exist_ok=True)
@@ -134,7 +156,6 @@ def run_weekly():
         f.write(report_md)
     logger.info(f"Saved: {output_path} ({len(report_md)} chars)")
 
-    # Notion にも保存（任意）
     _save_digest_to_notion(report_md, date_str)
 
     logger.info("=== Weekly Digest Done ===")
