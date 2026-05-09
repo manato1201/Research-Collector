@@ -27,25 +27,18 @@ jobs:
       - name: Install dependencies
         run: |
           pip install feedparser requests python-dotenv
-          pip install "notebooklm-py[browser]"
-          playwright install chromium
-          playwright install-deps  # Linux 必須
-
-      # ── NotebookLM 認証の復元 ───────────────────────────────
-      - name: Restore NotebookLM auth
-        run: |
-          mkdir -p ~/.notebooklm
-          echo "${{ secrets.NOTEBOOKLM_STORAGE_STATE }}" \
-            | base64 -d > ~/.notebooklm/storage_state.json
-          echo "storage_state.json restored"
+          pip install "notebooklm-py"
 
       # ── 認証チェック ────────────────────────────────────────
       - name: Check auth
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
         run: python main.py --mode check
 
       # ── デイリー収集実行 ────────────────────────────────────
       - name: Run daily collect
         env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py --mode daily
