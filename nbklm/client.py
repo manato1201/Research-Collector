@@ -4,7 +4,10 @@ research-collector から呼び出す NotebookLM 操作をまとめたモジュ�
 """
 
 import asyncio
+import json
 import logging
+import os
+import tempfile
 from datetime import datetime
 from typing import Optional
 
@@ -13,6 +16,40 @@ from notebooklm import NotebookLMClient
 from .notebook_ids import NOTEBOOK_IDS, SOURCE_TYPE_TO_NOTEBOOK
 
 logger = logging.getLogger(__name__)
+
+
+# ------------------------------------------------------------------ #
+#  認証クライアント生成
+# ------------------------------------------------------------------ #
+
+async def _make_client() -> NotebookLMClient:
+    """
+    NOTEBOOKLM_AUTH_JSON 環境変数があればそれを使い、
+    なければデフォルトの storage_state.json を使う。
+    """
+    auth_json = os.environ.get("NOTEBOOKLM_AUTH_JSON", "").strip()
+
+    if auth_json:
+        # 環境変数から一時ファイルに書き出して from_storage() に渡す
+        logger.info("[NotebookLM] using NOTEBOOKLM_AUTH_JSON env var")
+        try:
+            # JSON として valid か確認
+            json.loads(auth_json)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"NOTEBOOKLM_AUTH_JSON is not valid JSON: {e}")
+
+        tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        tmp.write(auth_json)
+        tmp.flush()
+        tmp.close()
+
+        client = await NotebookLMClient.from_storage(path=tmp.name)
+        return client
+    else:
+        logger.info("[NotebookLM] using default storage_state.json")
+        return await NotebookLMClient.from_storage()
 
 
 # ------------------------------------------------------------------ #
@@ -29,21 +66,9 @@ def _get_notebook_id(source_type: str) -> str:
 # ------------------------------------------------------------------ #
 
 async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
-    """
-    収集した記事をノートブックへ追加する。
-
-    Parameters
-    ----------
-    articles : list[dict]
-        各要素は {"url": str, "source_type": str, "title": str} を含む
-
-    Returns
-    -------
-    dict  {"ok": int, "skip": int, "errors": list[str]}
-    """
     result = {"ok": 0, "skip": 0, "errors": []}
 
-    async with await NotebookLMClient.from_storage() as client:
+    async with await _make_client() as client:
         for article in articles:
             url = article.get("url", "")
             source_type = article.get("source_type", "zenn")
@@ -63,7 +88,6 @@ async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
 
 
 def add_articles(articles: list[dict]) -> dict:
-    """同期ラッパー（GitHub Actions / main.py から呼び出す用）"""
     return asyncio.run(add_articles_to_notebooklm(articles))
 
 
@@ -72,9 +96,8 @@ def add_articles(articles: list[dict]) -> dict:
 # ------------------------------------------------------------------ #
 
 async def add_paper_async(pdf_path: str, title: Optional[str] = None) -> bool:
-    """ローカルPDFをSoftware-Engineeringノートブックへ追加"""
     nb_id = NOTEBOOK_IDS["software_engineering"]
-    async with await NotebookLMClient.from_storage() as client:
+    async with await _make_client() as client:
         try:
             await client.sources.add_file(nb_id, pdf_path, wait=False)
             logger.info(f"[NotebookLM] paper added: {pdf_path}")
@@ -121,15 +144,9 @@ WEEKLY_RESEARCH_QUERIES = [
 
 
 async def generate_weekly_digest_async() -> Optional[str]:
-    """
-    Weekly-Digest ノートブックで Deep Research を実行し
-    まとめレポートを Markdown 文字列で返す
-    """
     nb_id = NOTEBOOK_IDS["weekly_digest"]
 
-    async with await NotebookLMClient.from_storage() as client:
-
-        # Deep Research（1クエリ。複数は時間がかかりすぎるため週替わりで1本）
+    async with await _make_client() as client:
         week_num = datetime.now().isocalendar()[1]
         query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
         logger.info(f"[NotebookLM] Deep Research: {query}")
@@ -144,7 +161,6 @@ async def generate_weekly_digest_async() -> Optional[str]:
         except Exception as e:
             logger.warning(f"[NotebookLM] research timeout (may be ok): {e}")
 
-        # レポート生成
         logger.info("[NotebookLM] generating weekly report...")
         try:
             status = await client.artifacts.generate_report(
@@ -154,7 +170,6 @@ async def generate_weekly_digest_async() -> Optional[str]:
             )
             await client.artifacts.wait_for_completion(nb_id, status.task_id)
 
-            # Markdown 取得
             report_md = await client.artifacts.download_report(
                 nb_id, format="markdown"
             )
@@ -171,12 +186,12 @@ def generate_weekly_digest() -> Optional[str]:
 
 
 # ------------------------------------------------------------------ #
-#  認証チェック（GitHub Actions 起動時に実行）
+#  認証チェック
 # ------------------------------------------------------------------ #
 
 async def check_auth_async() -> bool:
     try:
-        async with await NotebookLMClient.from_storage() as client:
+        async with await _make_client() as client:
             notebooks = await client.notebooks.list()
             logger.info(f"[NotebookLM] auth OK ({len(notebooks)} notebooks)")
             return True
