@@ -1,0 +1,60 @@
+name: Daily Research Collect
+
+on:
+  schedule:
+    # JST 6:00 = UTC 21:00（前日）
+    - cron: '0 21 * * *'
+  workflow_dispatch:  # 手動実行可能
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── リポジトリ取得 ──────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Python セットアップ ─────────────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      # ── 依存関係インストール ────────────────────────────────
+      - name: Install dependencies
+        run: |
+          pip install feedparser requests python-dotenv
+          pip install "notebooklm-py[browser]"
+          playwright install chromium
+          playwright install-deps  # Linux 必須
+
+      # ── NotebookLM 認証の復元 ───────────────────────────────
+      - name: Restore NotebookLM auth
+        run: |
+          mkdir -p ~/.notebooklm
+          echo "${{ secrets.NOTEBOOKLM_STORAGE_STATE }}" \
+            | base64 -d > ~/.notebooklm/storage_state.json
+          echo "storage_state.json restored"
+
+      # ── 認証チェック ────────────────────────────────────────
+      - name: Check auth
+        run: python main.py --mode check
+
+      # ── デイリー収集実行 ────────────────────────────────────
+      - name: Run daily collect
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python main.py --mode daily
+
+      # ── ログを artifacts として保存（デバッグ用）───────────
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: collect-log-${{ github.run_number }}
+          path: output/
+          retention-days: 14
