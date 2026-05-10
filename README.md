@@ -206,4 +206,4 @@ MIT License — 自由に改変・再配布して使ってください。
 
 ---
 
-*Created by 松浦真聖 (TK230178) — Tokyo International University of Technology*
+*Created by 松浦真聖 *
