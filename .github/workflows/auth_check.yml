@@ -1,0 +1,46 @@
+name: Weekly Auth Check
+
+on:
+  schedule:
+    # 毎週日曜 AM 5:00 JST = UTC 土曜 20:00
+    # daily_collect（UTC 21:00）の1時間前に実行
+    - cron: '0 20 * * 0'
+  workflow_dispatch:
+
+jobs:
+  auth-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install "notebooklm-py"
+
+      - name: Check NotebookLM auth
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          python main.py --mode check
+          echo "✅ 認証OK - 今週のデイリー収集は正常に動作します"
+
+      # 認証チェック失敗時はGitHubがデフォルトでメール通知を送る
+      # 追加でissueを自動作成する場合は以下を有効化
+      # - name: Create issue on auth failure
+      #   if: failure()
+      #   uses: actions/github-script@v7
+      #   with:
+      #     script: |
+      #       github.rest.issues.create({
+      #         owner: context.repo.owner,
+      #         repo: context.repo.repo,
+      #         title: '🔐 NotebookLM 認証切れ - 再ログインが必要です',
+      #         body: `## 認証が切れています\n\nWSL2で以下を実行してSecretを更新してください。\n\n\`\`\`bash\nbash refresh_auth.sh\n\`\`\`\n\n[Secrets設定ページ](https://github.com/${context.repo.owner}/${context.repo.repo}/settings/secrets/actions)`
+      #       })

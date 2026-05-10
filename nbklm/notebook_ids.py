@@ -1,11 +1,16 @@
 """
 NotebookLM ノートブックID定数
-更新日: 2026-05-09 週次ノートブック対応
+更新日: 2026-05-10 ノートブックID環境変数化
 """
 
-# 固定ノートブック（Weekly-Digestのみ固定）
+import os
+
+# 固定ノートブック（環境変数から取得、なければフォールバック）
 NOTEBOOK_IDS_FIXED = {
-    "weekly_digest": "0942eb24-05f7-45e5-a3d9-1f67e1c5ca0a",
+    "weekly_digest": os.environ.get(
+        "NOTEBOOKLM_WEEKLY_DIGEST_ID",
+        "0942eb24-05f7-45e5-a3d9-1f67e1c5ca0a",
+    ),
 }
 
 # source_type → カテゴリリスト（複数ノートブックに同時追加）

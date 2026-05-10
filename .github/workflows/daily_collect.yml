@@ -10,8 +10,6 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    permissions:
-      contents: write  # seen_urls.txt をコミットするために必要
 
     steps:
       - name: Checkout
@@ -28,6 +26,14 @@ jobs:
           pip install feedparser requests python-dotenv
           pip install "notebooklm-py"
 
+      # ── 前回の seen_urls.txt を復元 ────────────────────────
+      - name: Download previous seen_urls.txt
+        uses: actions/download-artifact@v4
+        with:
+          name: seen-urls
+          path: .
+        continue-on-error: true  # 初回は存在しないためエラーを無視
+
       # ── 認証チェック ────────────────────────────────────────
       - name: Check auth
         env:
@@ -38,18 +44,20 @@ jobs:
       - name: Run daily collect
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+          NOTEBOOKLM_WEEKLY_DIGEST_ID: ${{ secrets.NOTEBOOKLM_WEEKLY_DIGEST_ID }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python main.py --mode daily
 
-      # ── seen_urls.txt をコミットして永続化 ─────────────────
-      - name: Commit seen_urls.txt
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add seen_urls.txt
-          git diff --cached --quiet || git commit -m "chore: update seen_urls.txt [skip ci]"
-          git push
+      # ── seen_urls.txt を artifact として保存（上書き） ──────
+      - name: Upload seen_urls.txt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: seen-urls
+          path: seen_urls.txt
+          retention-days: 400
+          overwrite: true
 
       # ── ログを artifacts として保存 ─────────────────────────
       - name: Upload logs
