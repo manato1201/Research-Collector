@@ -1,7 +1,7 @@
 """
 notebooklm-py ラッパー
 週次ノートブック自動作成・重複チェック対応版
-最新API対応: source add-research / generate report
+最新API対応: CLI サブプロセス方式
 """
 
 import asyncio
@@ -156,7 +156,7 @@ def add_paper(pdf_path: str, title: Optional[str] = None) -> bool:
 
 
 # ------------------------------------------------------------------ #
-#  週次 Digest 生成（CLIを使う方式に変更）
+#  週次 Digest 生成（CLI サブプロセス方式）
 # ------------------------------------------------------------------ #
 
 WEEKLY_RESEARCH_QUERIES = [
@@ -175,20 +175,23 @@ WEEKLY_REPORT_PROMPT = (
 )
 
 
-def _run_cli(args: list[str], env_extra: dict = {}) -> tuple[bool, str]:
-    """notebooklm CLIをサブプロセスで実行する"""
-    env = os.environ.copy()
-    env.update(env_extra)
+def _run_cli(args: list[str], timeout: int = 300) -> tuple[bool, str]:
+    """
+    notebooklm CLI をサブプロセスで実行する。
+    NOTEBOOKLM_AUTH_JSON 環境変数を引き継いで実行する。
+    """
     try:
         result = subprocess.run(
             ["notebooklm"] + args,
             capture_output=True,
             text=True,
-            env=env,
-            timeout=300,
+            env=os.environ.copy(),  # 認証環境変数を引き継ぐ
+            timeout=timeout,
         )
         success = result.returncode == 0
         output = result.stdout + result.stderr
+        if not success:
+            logger.debug(f"[CLI] failed: {output[:300]}")
         return success, output
     except subprocess.TimeoutExpired:
         return False, "timeout"
@@ -199,52 +202,55 @@ def _run_cli(args: list[str], env_extra: dict = {}) -> tuple[bool, str]:
 async def generate_weekly_digest_async() -> Optional[str]:
     """
     Weekly-Digest ノートブックで:
-    1. Deep Research を実行
+    1. Deep Research を実行（-n はサブコマンドの後に指定）
     2. カスタムレポートを生成
-    3. Markdown で取得して返す
+    3. Markdown でダウンロードして返す
     """
     nb_id = NOTEBOOK_IDS_FIXED["weekly_digest"]
 
     # 週番号からクエリを選択
-    year, week = _weekly_label()
+    _, week = _weekly_label()
     week_num = int(week[1:])
     query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
 
-    # 1. Deep Research（CLIを使用）
+    # 1. Deep Research
+    # 正しい引数順序: notebooklm source add-research <query> -n <id> --mode deep
     logger.info(f"[NotebookLM] Deep Research: {query}")
     ok, out = _run_cli([
-        "-n", nb_id,
         "source", "add-research", query,
+        "-n", nb_id,
         "--mode", "deep",
         "--import-all",
-    ])
+    ], timeout=360)
     if not ok:
-        logger.warning(f"[NotebookLM] research may have timed out (continuing): {out[:200]}")
+        logger.warning(f"[NotebookLM] research may have timed out (continuing): {out[:100]}")
 
-    # 2. レポート生成（CLIを使用）
+    # 2. レポート生成
+    # 正しい引数順序: notebooklm generate report <description> -n <id> --format custom --wait
     logger.info("[NotebookLM] generating weekly report...")
     ok, out = _run_cli([
+        "generate", "report", WEEKLY_REPORT_PROMPT,
         "-n", nb_id,
-        "generate", "report",
-        WEEKLY_REPORT_PROMPT,
         "--format", "custom",
         "--wait",
-    ])
+    ], timeout=300)
     if not ok:
         logger.error(f"[NotebookLM] report generation failed: {out[:200]}")
         return None
 
     # 3. レポートをダウンロード
+    # 正しい引数順序: notebooklm download report <path> -n <id> --latest --force
     with tempfile.NamedTemporaryFile(
         suffix=".md", delete=False, mode="w", encoding="utf-8"
     ) as f:
         tmp_path = f.name
 
     ok, out = _run_cli([
-        "-n", nb_id,
         "download", "report", tmp_path,
-        "--latest", "--force",
-    ])
+        "-n", nb_id,
+        "--latest",
+        "--force",
+    ], timeout=60)
     if not ok:
         logger.error(f"[NotebookLM] report download failed: {out[:200]}")
         return None
