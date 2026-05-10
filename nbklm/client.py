@@ -1,13 +1,14 @@
 """
 notebooklm-py ラッパー
 週次ノートブック自動作成・重複チェック対応版
-1ノートブック上限300件（NotebookLM Plus）を考慮した設計
+最新API対応: source add-research / generate report
 """
 
 import asyncio
 import json
 import logging
 import os
+import subprocess
 import tempfile
 from datetime import datetime
 from typing import Optional
@@ -53,22 +54,16 @@ async def _make_client() -> NotebookLMClient:
 #  週次ノートブック管理
 # ------------------------------------------------------------------ #
 
-# カテゴリ → 当週ノートブックIDのキャッシュ（実行内で使いまわす）
 _weekly_nb_cache: dict[str, str] = {}
 
 
 def _weekly_label() -> tuple[str, str]:
-    """
-    現在の年・週番号を返す。
-    例: ('2026', 'W20')
-    """
     now = datetime.now()
     year, week, _ = now.isocalendar()
     return str(year), f"W{week:02d}"
 
 
 def _weekly_name(category: str, year: str, week: str) -> str:
-    """例: 'game_dev_tech', '2026', 'W20' → 'Game-Dev-Tech-2026-W20'"""
     tpl = CATEGORY_TO_NOTEBOOK_NAME.get(category, "Research-{YYYY}-{WNN}")
     return tpl.replace("{YYYY}", year).replace("{WNN}", week)
 
@@ -79,28 +74,20 @@ async def _get_or_create_weekly_notebook(
     year: str,
     week: str,
 ) -> str:
-    """
-    当週のノートブックIDを返す。
-    存在しなければ新規作成してIDを返す。
-    """
     cache_key = f"{category}:{year}:{week}"
     if cache_key in _weekly_nb_cache:
         return _weekly_nb_cache[cache_key]
 
     target_name = _weekly_name(category, year, week)
 
-    # 既存ノートブック一覧から検索
     notebooks = await client.notebooks.list()
     for nb in notebooks:
         if nb.title == target_name:
-            logger.info(
-                f"[NotebookLM] found existing: {target_name} ({nb.id[:8]}...)"
-            )
+            logger.info(f"[NotebookLM] found: {target_name}")
             _weekly_nb_cache[cache_key] = nb.id
             return nb.id
 
-    # 存在しなければ新規作成
-    logger.info(f"[NotebookLM] creating new notebook: {target_name}")
+    logger.info(f"[NotebookLM] creating: {target_name}")
     new_nb = await client.notebooks.create(title=target_name)
     logger.info(f"[NotebookLM] created: {target_name} ({new_nb.id[:8]}...)")
     _weekly_nb_cache[cache_key] = new_nb.id
@@ -112,10 +99,6 @@ async def _get_or_create_weekly_notebook(
 # ------------------------------------------------------------------ #
 
 async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
-    """
-    収集した記事を当週のノートブックへ追加する。
-    source_typeが複数カテゴリに対応する場合は全カテゴリに追加。
-    """
     result = {"ok": 0, "skip": 0, "errors": []}
     year, week = _weekly_label()
 
@@ -134,9 +117,7 @@ async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
                 nb_name = _weekly_name(category, year, week)
                 try:
                     await client.sources.add_url(nb_id, url, wait=False)
-                    logger.info(
-                        f"[NotebookLM] added to {nb_name}: {url[:60]}"
-                    )
+                    logger.info(f"[NotebookLM] added to {nb_name}: {url[:60]}")
                     result["ok"] += 1
                 except Exception as e:
                     msg = f"{url[:50]} → {nb_name} → {e}"
@@ -175,28 +156,8 @@ def add_paper(pdf_path: str, title: Optional[str] = None) -> bool:
 
 
 # ------------------------------------------------------------------ #
-#  週次 Digest 生成
+#  週次 Digest 生成（CLIを使う方式に変更）
 # ------------------------------------------------------------------ #
-
-WEEKLY_DIGEST_PROMPT = """
-ゲーム開発・グラフィクス技術の週次まとめレポートを日本語で作成してください。
-
-## 対象テーマ
-- Unity / Unreal Engine の最新動向・アップデート
-- DirectX 12 / HLSL / リアルタイムレンダリング技術
-- ゲームエンジン・ツール開発
-- ソフトウェア工学・CG論文ピックアップ
-
-## フォーマット
-1. 今週のハイライト（3点）
-2. Unity / UE 注目トピック
-3. グラフィクス・レンダリング技術
-4. 論文・CEDEC/GDC ピックアップ
-5. 来週注目すべき動向
-
-対象読者: ゲームエンジン・ツールエンジニアを目指す学生
-トーン: 技術的かつ簡潔に、重要度順で記述
-"""
 
 WEEKLY_RESEARCH_QUERIES = [
     "Unity 最新アップデート 2026",
@@ -205,44 +166,98 @@ WEEKLY_RESEARCH_QUERIES = [
     "ゲームエンジン 技術 最新",
 ]
 
+WEEKLY_REPORT_PROMPT = (
+    "ゲーム開発・グラフィクス技術の週次まとめレポートを日本語で作成してください。"
+    "対象: Unity/UE最新動向、DirectX12/HLSL技術、CG論文ピックアップ。"
+    "フォーマット: 1.今週のハイライト 2.Unity/UE注目トピック "
+    "3.グラフィクス技術 4.論文ピックアップ 5.来週の注目動向。"
+    "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+)
+
+
+def _run_cli(args: list[str], env_extra: dict = {}) -> tuple[bool, str]:
+    """notebooklm CLIをサブプロセスで実行する"""
+    env = os.environ.copy()
+    env.update(env_extra)
+    try:
+        result = subprocess.run(
+            ["notebooklm"] + args,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=300,
+        )
+        success = result.returncode == 0
+        output = result.stdout + result.stderr
+        return success, output
+    except subprocess.TimeoutExpired:
+        return False, "timeout"
+    except Exception as e:
+        return False, str(e)
+
 
 async def generate_weekly_digest_async() -> Optional[str]:
+    """
+    Weekly-Digest ノートブックで:
+    1. Deep Research を実行
+    2. カスタムレポートを生成
+    3. Markdown で取得して返す
+    """
     nb_id = NOTEBOOK_IDS_FIXED["weekly_digest"]
 
-    async with await _make_client() as client:
-        year, week = _weekly_label()
-        week_num = int(week[1:])
-        query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
-        logger.info(f"[NotebookLM] Deep Research: {query}")
+    # 週番号からクエリを選択
+    year, week = _weekly_label()
+    week_num = int(week[1:])
+    query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
 
-        try:
-            await client.sources.add_research(
-                nb_id,
-                query=query,
-                mode="deep",
-                auto_import=True,
-            )
-        except Exception as e:
-            logger.warning(f"[NotebookLM] research timeout (may be ok): {e}")
+    # 1. Deep Research（CLIを使用）
+    logger.info(f"[NotebookLM] Deep Research: {query}")
+    ok, out = _run_cli([
+        "-n", nb_id,
+        "source", "add-research", query,
+        "--mode", "deep",
+        "--import-all",
+    ])
+    if not ok:
+        logger.warning(f"[NotebookLM] research may have timed out (continuing): {out[:200]}")
 
-        logger.info("[NotebookLM] generating weekly report...")
-        try:
-            status = await client.artifacts.generate_report(
-                nb_id,
-                format="custom",
-                instructions=WEEKLY_DIGEST_PROMPT,
-            )
-            await client.artifacts.wait_for_completion(nb_id, status.task_id)
-            report_md = await client.artifacts.download_report(
-                nb_id, format="markdown"
-            )
-            logger.info(
-                f"[NotebookLM] report generated ({len(report_md)} chars)"
-            )
-            return report_md
-        except Exception as e:
-            logger.error(f"[NotebookLM] report generation failed: {e}")
-            return None
+    # 2. レポート生成（CLIを使用）
+    logger.info("[NotebookLM] generating weekly report...")
+    ok, out = _run_cli([
+        "-n", nb_id,
+        "generate", "report",
+        WEEKLY_REPORT_PROMPT,
+        "--format", "custom",
+        "--wait",
+    ])
+    if not ok:
+        logger.error(f"[NotebookLM] report generation failed: {out[:200]}")
+        return None
+
+    # 3. レポートをダウンロード
+    with tempfile.NamedTemporaryFile(
+        suffix=".md", delete=False, mode="w", encoding="utf-8"
+    ) as f:
+        tmp_path = f.name
+
+    ok, out = _run_cli([
+        "-n", nb_id,
+        "download", "report", tmp_path,
+        "--latest", "--force",
+    ])
+    if not ok:
+        logger.error(f"[NotebookLM] report download failed: {out[:200]}")
+        return None
+
+    try:
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            report_md = f.read()
+        os.unlink(tmp_path)
+        logger.info(f"[NotebookLM] report generated ({len(report_md)} chars)")
+        return report_md
+    except Exception as e:
+        logger.error(f"[NotebookLM] report read failed: {e}")
+        return None
 
 
 def generate_weekly_digest() -> Optional[str]:
@@ -257,9 +272,7 @@ async def check_auth_async() -> bool:
     try:
         async with await _make_client() as client:
             notebooks = await client.notebooks.list()
-            logger.info(
-                f"[NotebookLM] auth OK ({len(notebooks)} notebooks)"
-            )
+            logger.info(f"[NotebookLM] auth OK ({len(notebooks)} notebooks)")
             return True
     except Exception as e:
         logger.error(f"[NotebookLM] auth FAILED: {e}")
