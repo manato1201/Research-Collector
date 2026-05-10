@@ -1,7 +1,7 @@
 """
 notebooklm-py ラッパー
 週次ノートブック自動作成・重複チェック対応版
-Weekly Digest: 当週の収集ノートブックを参照してレポート生成
+Weekly Digest: 当週の収集ノートブックを参照してレポート生成（日本語）
 """
 
 import asyncio
@@ -79,7 +79,6 @@ async def _get_or_create_weekly_notebook(
         return _weekly_nb_cache[cache_key]
 
     target_name = _weekly_name(category, year, week)
-
     notebooks = await client.notebooks.list()
     for nb in notebooks:
         if nb.title == target_name:
@@ -94,7 +93,9 @@ async def _get_or_create_weekly_notebook(
     return new_nb.id
 
 
-async def _get_weekly_notebook_ids(client: NotebookLMClient, year: str, week: str) -> dict[str, str]:
+async def _get_weekly_notebook_ids(
+    client: NotebookLMClient, year: str, week: str
+) -> dict[str, str]:
     """当週の全カテゴリのノートブックIDを返す（存在するものだけ）"""
     categories = ["game_dev_tech", "graphics_research", "software_engineering"]
     result = {}
@@ -105,7 +106,7 @@ async def _get_weekly_notebook_ids(client: NotebookLMClient, year: str, week: st
         name = _weekly_name(category, year, week)
         if name in nb_map:
             result[category] = nb_map[name]
-            logger.info(f"[NotebookLM] digest source: {name} ({nb_map[name][:8]}...)")
+            logger.info(f"[NotebookLM] digest source: {name}")
         else:
             logger.warning(f"[NotebookLM] not found: {name} (skipping)")
 
@@ -175,39 +176,54 @@ def add_paper(pdf_path: str, title: Optional[str] = None) -> bool:
 
 # ------------------------------------------------------------------ #
 #  週次 Digest 生成
-#  → 当週の収集ノートブック3つを参照してカテゴリ別レポートを生成
-#  → まとめて1本のMarkdownとして返す
+#  当週の収集ノートブック3つを参照してカテゴリ別レポートを生成
 # ------------------------------------------------------------------ #
 
 REPORT_PROMPTS = {
     "game_dev_tech": (
+        "必ず日本語で出力してください。英語での出力は不可です。\n\n"
         "このノートブックに蓄積された今週の技術記事をもとに、"
-        "ゲーム開発・エンジン技術の週次まとめレポートを日本語で作成してください。"
-        "フォーマット: 1.注目トピック（3点） 2.Unity最新動向 3.Unreal Engine最新動向 "
-        "4.注目記事リスト（タイトルと1行要約）。"
-        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+        "ゲーム開発・エンジン技術の週次まとめレポートを作成してください。\n\n"
+        "## フォーマット（必ず守ること）\n"
+        "### 1. 今週の注目トピック（3点）\n"
+        "### 2. Unity 最新動向\n"
+        "### 3. Unreal Engine 最新動向\n"
+        "### 4. 注目記事リスト（タイトルと1〜2行の要約）\n\n"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生\n"
+        "トーン: 技術的・簡潔・重要度順"
     ),
     "graphics_research": (
+        "必ず日本語で出力してください。英語での出力は不可です。\n\n"
         "このノートブックに蓄積された今週の技術記事をもとに、"
-        "グラフィクス・レンダリング技術の週次まとめレポートを日本語で作成してください。"
-        "フォーマット: 1.注目トピック（3点） 2.レンダリング技術動向 "
-        "3.DirectX12/HLSL関連 4.CEDEC/GDC注目資料。"
-        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+        "グラフィクス・レンダリング技術の週次まとめレポートを作成してください。\n\n"
+        "## フォーマット（必ず守ること）\n"
+        "### 1. 今週の注目トピック（3点）\n"
+        "### 2. レンダリング技術の動向\n"
+        "### 3. DirectX12 / HLSL 関連\n"
+        "### 4. CEDEC / GDC 注目資料\n\n"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生\n"
+        "トーン: 技術的・簡潔・重要度順"
     ),
     "software_engineering": (
+        "必ず日本語で出力してください。英語での出力は不可です。\n\n"
         "このノートブックに蓄積された今週の論文・技術資料をもとに、"
-        "ソフトウェア工学・CG論文の週次まとめレポートを日本語で作成してください。"
-        "フォーマット: 1.注目論文（3点） 2.RAG・LLM関連研究 "
-        "3.DCCツール学習・ドキュメント関連研究 4.その他注目研究。"
-        "卒論テーマ（RAG×MCPによるHoudiniチュートリアル自動生成）との関連も示すこと。"
-        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+        "ソフトウェア工学・CG論文の週次まとめレポートを作成してください。\n\n"
+        "## フォーマット（必ず守ること）\n"
+        "### 1. 今週の注目論文（3点）\n"
+        "### 2. RAG・LLM 関連研究\n"
+        "### 3. DCCツール学習・ドキュメント関連研究\n"
+        "### 4. その他注目研究\n"
+        "### 5. 卒論テーマとの関連\n"
+        "（テーマ: RAGとMCPを用いたHoudiniチュートリアル自動生成システム）\n\n"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生\n"
+        "トーン: 技術的・簡潔・重要度順"
     ),
 }
 
 CATEGORY_LABELS = {
-    "game_dev_tech":        "## 🎮 Game Dev Tech",
-    "graphics_research":    "## 🖥️ Graphics Research",
-    "software_engineering": "## 📄 Software Engineering / 論文",
+    "game_dev_tech":        "## 🎮 ゲーム開発・エンジン技術",
+    "graphics_research":    "## 🖥️ グラフィクス・レンダリング技術",
+    "software_engineering": "## 📄 ソフトウェア工学・論文",
 }
 
 
@@ -232,17 +248,26 @@ def _run_cli(args: list[str], timeout: int = 300) -> tuple[bool, str]:
         return False, str(e)
 
 
+def _set_language_ja() -> bool:
+    """NotebookLMの出力言語を日本語に設定する"""
+    ok, out = _run_cli(["language", "set", "ja", "--local"], timeout=30)
+    if ok:
+        logger.info("[NotebookLM] language set to ja")
+    else:
+        logger.warning(f"[NotebookLM] language set failed: {out[:100]}")
+    return ok
+
+
 def _generate_report_for_notebook(nb_id: str, category: str) -> Optional[str]:
-    """
-    指定ノートブックに対してレポートを生成してMarkdown文字列で返す
-    """
+    """指定ノートブックに対してレポートを生成してMarkdown文字列で返す"""
     prompt = REPORT_PROMPTS.get(category, "")
 
-    # レポート生成
+    # レポート生成（--language ja を明示指定）
     ok, out = _run_cli([
         "generate", "report", prompt,
         "-n", nb_id,
         "--format", "custom",
+        "--language", "ja",
         "--wait",
     ], timeout=300)
 
@@ -281,9 +306,12 @@ def _generate_report_for_notebook(nb_id: str, category: str) -> Optional[str]:
 async def generate_weekly_digest_async() -> Optional[str]:
     """
     当週の3つの収集ノートブックを参照してカテゴリ別レポートを生成し、
-    1本のMarkdownにまとめて返す。
+    1本の日本語Markdownにまとめて返す。
     """
     year, week = _weekly_label()
+
+    # 出力言語を日本語に設定
+    _set_language_ja()
 
     # 当週ノートブックのIDを取得
     async with await _make_client() as client:
@@ -298,8 +326,11 @@ async def generate_weekly_digest_async() -> Optional[str]:
     # カテゴリ別にレポートを生成してまとめる
     date_str = datetime.now().strftime("%Y-%m-%d")
     sections = [
-        f"# Weekly Research Digest — {year}-{week} ({date_str})\n",
-        f"> 収集ノートブック: {', '.join(_weekly_name(c, year, week) for c in nb_ids)}\n",
+        f"# 週次リサーチダイジェスト — {year}-{week}（{date_str}）\n",
+        "> **収集ノートブック:** "
+        + "、".join(_weekly_name(c, year, week) for c in nb_ids)
+        + "\n",
+        "> **生成日時:** " + datetime.now().strftime("%Y年%m月%d日 %H:%M") + "\n",
     ]
 
     for category, nb_id in nb_ids.items():
