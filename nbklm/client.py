@@ -1,7 +1,7 @@
 """
 notebooklm-py ラッパー
 週次ノートブック自動作成・重複チェック対応版
-最新API対応: CLI サブプロセス方式
+Weekly Digest: 当週の収集ノートブックを参照してレポート生成
 """
 
 import asyncio
@@ -94,6 +94,24 @@ async def _get_or_create_weekly_notebook(
     return new_nb.id
 
 
+async def _get_weekly_notebook_ids(client: NotebookLMClient, year: str, week: str) -> dict[str, str]:
+    """当週の全カテゴリのノートブックIDを返す（存在するものだけ）"""
+    categories = ["game_dev_tech", "graphics_research", "software_engineering"]
+    result = {}
+    notebooks = await client.notebooks.list()
+    nb_map = {nb.title: nb.id for nb in notebooks}
+
+    for category in categories:
+        name = _weekly_name(category, year, week)
+        if name in nb_map:
+            result[category] = nb_map[name]
+            logger.info(f"[NotebookLM] digest source: {name} ({nb_map[name][:8]}...)")
+        else:
+            logger.warning(f"[NotebookLM] not found: {name} (skipping)")
+
+    return result
+
+
 # ------------------------------------------------------------------ #
 #  記事URLの一括追加
 # ------------------------------------------------------------------ #
@@ -156,36 +174,51 @@ def add_paper(pdf_path: str, title: Optional[str] = None) -> bool:
 
 
 # ------------------------------------------------------------------ #
-#  週次 Digest 生成（CLI サブプロセス方式）
+#  週次 Digest 生成
+#  → 当週の収集ノートブック3つを参照してカテゴリ別レポートを生成
+#  → まとめて1本のMarkdownとして返す
 # ------------------------------------------------------------------ #
 
-WEEKLY_RESEARCH_QUERIES = [
-    "Unity 最新アップデート 2026",
-    "Unreal Engine 新機能 2026",
-    "DirectX12 HLSL リアルタイムレンダリング",
-    "ゲームエンジン 技術 最新",
-]
+REPORT_PROMPTS = {
+    "game_dev_tech": (
+        "このノートブックに蓄積された今週の技術記事をもとに、"
+        "ゲーム開発・エンジン技術の週次まとめレポートを日本語で作成してください。"
+        "フォーマット: 1.注目トピック（3点） 2.Unity最新動向 3.Unreal Engine最新動向 "
+        "4.注目記事リスト（タイトルと1行要約）。"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+    ),
+    "graphics_research": (
+        "このノートブックに蓄積された今週の技術記事をもとに、"
+        "グラフィクス・レンダリング技術の週次まとめレポートを日本語で作成してください。"
+        "フォーマット: 1.注目トピック（3点） 2.レンダリング技術動向 "
+        "3.DirectX12/HLSL関連 4.CEDEC/GDC注目資料。"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+    ),
+    "software_engineering": (
+        "このノートブックに蓄積された今週の論文・技術資料をもとに、"
+        "ソフトウェア工学・CG論文の週次まとめレポートを日本語で作成してください。"
+        "フォーマット: 1.注目論文（3点） 2.RAG・LLM関連研究 "
+        "3.DCCツール学習・ドキュメント関連研究 4.その他注目研究。"
+        "卒論テーマ（RAG×MCPによるHoudiniチュートリアル自動生成）との関連も示すこと。"
+        "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
+    ),
+}
 
-WEEKLY_REPORT_PROMPT = (
-    "ゲーム開発・グラフィクス技術の週次まとめレポートを日本語で作成してください。"
-    "対象: Unity/UE最新動向、DirectX12/HLSL技術、CG論文ピックアップ。"
-    "フォーマット: 1.今週のハイライト 2.Unity/UE注目トピック "
-    "3.グラフィクス技術 4.論文ピックアップ 5.来週の注目動向。"
-    "対象読者: ゲームエンジン・ツールエンジニアを目指す学生。"
-)
+CATEGORY_LABELS = {
+    "game_dev_tech":        "## 🎮 Game Dev Tech",
+    "graphics_research":    "## 🖥️ Graphics Research",
+    "software_engineering": "## 📄 Software Engineering / 論文",
+}
 
 
 def _run_cli(args: list[str], timeout: int = 300) -> tuple[bool, str]:
-    """
-    notebooklm CLI をサブプロセスで実行する。
-    NOTEBOOKLM_AUTH_JSON 環境変数を引き継いで実行する。
-    """
+    """notebooklm CLI をサブプロセスで実行する"""
     try:
         result = subprocess.run(
             ["notebooklm"] + args,
             capture_output=True,
             text=True,
-            env=os.environ.copy(),  # 認証環境変数を引き継ぐ
+            env=os.environ.copy(),
             timeout=timeout,
         )
         success = result.returncode == 0
@@ -199,47 +232,25 @@ def _run_cli(args: list[str], timeout: int = 300) -> tuple[bool, str]:
         return False, str(e)
 
 
-async def generate_weekly_digest_async() -> Optional[str]:
+def _generate_report_for_notebook(nb_id: str, category: str) -> Optional[str]:
     """
-    Weekly-Digest ノートブックで:
-    1. Deep Research を実行（-n はサブコマンドの後に指定）
-    2. カスタムレポートを生成
-    3. Markdown でダウンロードして返す
+    指定ノートブックに対してレポートを生成してMarkdown文字列で返す
     """
-    nb_id = NOTEBOOK_IDS_FIXED["weekly_digest"]
+    prompt = REPORT_PROMPTS.get(category, "")
 
-    # 週番号からクエリを選択
-    _, week = _weekly_label()
-    week_num = int(week[1:])
-    query = WEEKLY_RESEARCH_QUERIES[week_num % len(WEEKLY_RESEARCH_QUERIES)]
-
-    # 1. Deep Research
-    # 正しい引数順序: notebooklm source add-research <query> -n <id> --mode deep
-    logger.info(f"[NotebookLM] Deep Research: {query}")
+    # レポート生成
     ok, out = _run_cli([
-        "source", "add-research", query,
-        "-n", nb_id,
-        "--mode", "deep",
-        "--import-all",
-    ], timeout=360)
-    if not ok:
-        logger.warning(f"[NotebookLM] research may have timed out (continuing): {out[:100]}")
-
-    # 2. レポート生成
-    # 正しい引数順序: notebooklm generate report <description> -n <id> --format custom --wait
-    logger.info("[NotebookLM] generating weekly report...")
-    ok, out = _run_cli([
-        "generate", "report", WEEKLY_REPORT_PROMPT,
+        "generate", "report", prompt,
         "-n", nb_id,
         "--format", "custom",
         "--wait",
     ], timeout=300)
+
     if not ok:
-        logger.error(f"[NotebookLM] report generation failed: {out[:200]}")
+        logger.error(f"[NotebookLM] report failed for {category}: {out[:200]}")
         return None
 
-    # 3. レポートをダウンロード
-    # 正しい引数順序: notebooklm download report <path> -n <id> --latest --force
+    # ダウンロード
     with tempfile.NamedTemporaryFile(
         suffix=".md", delete=False, mode="w", encoding="utf-8"
     ) as f:
@@ -251,19 +262,62 @@ async def generate_weekly_digest_async() -> Optional[str]:
         "--latest",
         "--force",
     ], timeout=60)
+
     if not ok:
-        logger.error(f"[NotebookLM] report download failed: {out[:200]}")
+        logger.error(f"[NotebookLM] download failed for {category}: {out[:200]}")
         return None
 
     try:
         with open(tmp_path, "r", encoding="utf-8") as f:
-            report_md = f.read()
+            content = f.read()
         os.unlink(tmp_path)
-        logger.info(f"[NotebookLM] report generated ({len(report_md)} chars)")
-        return report_md
+        logger.info(f"[NotebookLM] {category} report: {len(content)} chars")
+        return content
     except Exception as e:
-        logger.error(f"[NotebookLM] report read failed: {e}")
+        logger.error(f"[NotebookLM] read failed for {category}: {e}")
         return None
+
+
+async def generate_weekly_digest_async() -> Optional[str]:
+    """
+    当週の3つの収集ノートブックを参照してカテゴリ別レポートを生成し、
+    1本のMarkdownにまとめて返す。
+    """
+    year, week = _weekly_label()
+
+    # 当週ノートブックのIDを取得
+    async with await _make_client() as client:
+        nb_ids = await _get_weekly_notebook_ids(client, year, week)
+
+    if not nb_ids:
+        logger.error("[NotebookLM] no weekly notebooks found for this week")
+        return None
+
+    logger.info(f"[NotebookLM] generating digest from {len(nb_ids)} notebooks")
+
+    # カテゴリ別にレポートを生成してまとめる
+    date_str = datetime.now().strftime("%Y-%m-%d")
+    sections = [
+        f"# Weekly Research Digest — {year}-{week} ({date_str})\n",
+        f"> 収集ノートブック: {', '.join(_weekly_name(c, year, week) for c in nb_ids)}\n",
+    ]
+
+    for category, nb_id in nb_ids.items():
+        label = CATEGORY_LABELS.get(category, f"## {category}")
+        nb_name = _weekly_name(category, year, week)
+        logger.info(f"[NotebookLM] generating report: {nb_name}")
+
+        report = _generate_report_for_notebook(nb_id, category)
+        if report:
+            sections.append(f"\n{label}\n")
+            sections.append(report)
+        else:
+            sections.append(f"\n{label}\n")
+            sections.append(f"> ⚠️ {nb_name} のレポート生成に失敗しました\n")
+
+    full_report = "\n".join(sections)
+    logger.info(f"[NotebookLM] digest complete ({len(full_report)} chars total)")
+    return full_report
 
 
 def generate_weekly_digest() -> Optional[str]:
