@@ -1,138 +1,94 @@
-# =============================================================
-# NotebookLM 再認証スクリプト（Windows PowerShell版）
-# 使い方: .\refresh_auth.ps1
-# =============================================================
-
-$REPO         = "manato1201/Research-Collector"
+$REPO = "manato1201/Research-Collector"
 $STORAGE_PATH = "$env:USERPROFILE\.notebooklm\storage_state.json"
 
-# ----------------------------------------------------------------
-# ヘルパー関数（PowerShellでは使う前に定義する必要がある）
-# ----------------------------------------------------------------
-function Invoke-ManualUpdate {
-    param($Json, $Repo)
-    $Json | Set-Clipboard
-    Write-Host ""
-    Write-Host "  Copied to clipboard." -ForegroundColor Green
-    Write-Host ""
-    Write-Host "  Manual steps:" -ForegroundColor Yellow
-    Write-Host "  1. Open: https://github.com/$Repo/settings/secrets/actions" -ForegroundColor White
-    Write-Host "  2. Click 'Update' on NOTEBOOKLM_AUTH_JSON" -ForegroundColor White
-    Write-Host "  3. Paste and save" -ForegroundColor White
-}
-
-function Invoke-WorkflowsByDay {
-    param($Repo)
-    $day = [int](Get-Date).DayOfWeek
-    Write-Host "  Today: $((Get-Date).ToString('yyyy/MM/dd (dddd)'))" -ForegroundColor White
-
-    # 毎日: Daily Research Collect
-    gh workflow run daily_collect.yml --repo $Repo
-    Write-Host "    OK: Daily Research Collect" -ForegroundColor Green
-
-    # 日曜: Weekly Auth Check も実行
-    if ($day -eq 0) {
-        Start-Sleep -Seconds 3
-        gh workflow run auth_check.yml --repo $Repo
-        Write-Host "    OK: Weekly Auth Check (Sunday)" -ForegroundColor Green
-    }
-
-    # 月曜: Weekly Research Digest も実行
-    if ($day -eq 1) {
-        Start-Sleep -Seconds 3
-        gh workflow run weekly_digest.yml --repo $Repo
-        Write-Host "    OK: Weekly Research Digest (Monday)" -ForegroundColor Green
-    }
-}
-
-# ----------------------------------------------------------------
-# Step 1: notebooklm-py の確認
-# ----------------------------------------------------------------
-Write-Host ""
-Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  NotebookLM Auth Refresh" -ForegroundColor Cyan
-Write-Host "======================================" -ForegroundColor Cyan
+Write-Host "======================================"
+Write-Host "  NotebookLM Auth Refresh"
+Write-Host "======================================"
 Write-Host ""
 
-Write-Host "[1/5] Checking notebooklm-py..." -ForegroundColor Yellow
+# Step 1: notebooklm-py check
+Write-Host "[1/5] Checking notebooklm-py..."
 if (-not (Get-Command notebooklm -ErrorAction SilentlyContinue)) {
-    Write-Host "  Installing..."
     pip install "notebooklm-py[browser]" -q
     playwright install chromium
-} else {
-    Write-Host "  OK" -ForegroundColor Green
 }
+Write-Host "  OK"
 
-# ----------------------------------------------------------------
-# Step 2: ログイン
-# ----------------------------------------------------------------
+# Step 2: Login
 Write-Host ""
-Write-Host "[2/5] Starting Google login..." -ForegroundColor Yellow
-Write-Host "  Browser will open. Login to Google then press ENTER."
+Write-Host "[2/5] Starting Google login..."
+Write-Host "  Browser will open. Login then press ENTER."
 Write-Host ""
 notebooklm login
 
-# ----------------------------------------------------------------
-# Step 3: storage_state.json の確認
-# ----------------------------------------------------------------
+# Step 3: Check file
 Write-Host ""
-Write-Host "[3/5] Checking auth file..." -ForegroundColor Yellow
+Write-Host "[3/5] Checking auth file..."
 if (-not (Test-Path $STORAGE_PATH)) {
-    Write-Host "  ERROR: $STORAGE_PATH not found." -ForegroundColor Red
+    Write-Host "  ERROR: file not found."
     exit 1
 }
-Write-Host "  OK ($STORAGE_PATH)" -ForegroundColor Green
+Write-Host "  OK"
 
-# ----------------------------------------------------------------
-# Step 4: GitHub Secrets を更新
-# ----------------------------------------------------------------
+# Step 4: Update secret
 Write-Host ""
-Write-Host "[4/5] Updating GitHub Secrets..." -ForegroundColor Yellow
-
+Write-Host "[4/5] Updating GitHub Secret..."
 $json = (Get-Content $STORAGE_PATH -Raw | ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
 
-if (Get-Command gh -ErrorAction SilentlyContinue) {
+$ghExists = Get-Command gh -ErrorAction SilentlyContinue
+if ($ghExists) {
     $null = gh auth status 2>&1
     if ($LASTEXITCODE -eq 0) {
         $json | gh secret set NOTEBOOKLM_AUTH_JSON --repo $REPO
-        Write-Host "  OK: NOTEBOOKLM_AUTH_JSON updated" -ForegroundColor Green
+        Write-Host "  OK: Secret updated"
 
-        # auth-expired Issue があれば自動クローズ
         $issueJson = gh issue list --repo $REPO --label "auth-expired" --state open --json number 2>$null
         if ($issueJson) {
             $issues = $issueJson | ConvertFrom-Json
             if ($issues.Count -gt 0) {
-                $issueNum = $issues[0].number
-                gh issue close $issueNum --repo $REPO --comment "Re-authenticated successfully."
-                Write-Host "  OK: Issue #$issueNum closed" -ForegroundColor Green
+                $num = $issues[0].number
+                gh issue close $num --repo $REPO --comment "Re-authenticated."
+                Write-Host "  OK: Issue #$num closed"
             }
         }
     } else {
-        Write-Host "  WARNING: gh not logged in. Run: gh auth login" -ForegroundColor Yellow
-        Invoke-ManualUpdate $json $REPO
+        Write-Host "  WARNING: gh not logged in. Run: gh auth login"
+        $json | Set-Clipboard
+        Write-Host "  Copied to clipboard. Paste to GitHub Secrets manually."
         exit 0
     }
 } else {
-    Write-Host "  INFO: GitHub CLI not found." -ForegroundColor Yellow
-    Invoke-ManualUpdate $json $REPO
+    Write-Host "  INFO: gh not found. Install from https://cli.github.com/"
+    $json | Set-Clipboard
+    Write-Host "  Copied to clipboard. Paste to GitHub Secrets manually."
     exit 0
 }
 
-# ----------------------------------------------------------------
-# Step 5: 曜日に応じてワークフローを自動再実行
-# ----------------------------------------------------------------
+# Step 5: Trigger workflows
 Write-Host ""
-Write-Host "[5/5] Triggering workflows..." -ForegroundColor Yellow
-Invoke-WorkflowsByDay $REPO
+Write-Host "[5/5] Triggering workflows..."
+$day = [int](Get-Date).DayOfWeek
+Write-Host "  Today: $((Get-Date).ToString('yyyy/MM/dd (dddd)'))"
 
-# ----------------------------------------------------------------
-# 完了
-# ----------------------------------------------------------------
+gh workflow run daily_collect.yml --repo $REPO
+Write-Host "  OK: Daily Research Collect"
+
+if ($day -eq 0) {
+    Start-Sleep -Seconds 3
+    gh workflow run auth_check.yml --repo $REPO
+    Write-Host "  OK: Weekly Auth Check (Sunday)"
+}
+
+if ($day -eq 1) {
+    Start-Sleep -Seconds 3
+    gh workflow run weekly_digest.yml --repo $REPO
+    Write-Host "  OK: Weekly Research Digest (Monday)"
+}
+
 Write-Host ""
-Write-Host "======================================" -ForegroundColor Cyan
-Write-Host "  Done!" -ForegroundColor Cyan
-Write-Host "======================================" -ForegroundColor Cyan
+Write-Host "======================================"
+Write-Host "  Done!"
+Write-Host "======================================"
 Write-Host ""
-Write-Host "  Check Actions:" -ForegroundColor White
-Write-Host "  https://github.com/$REPO/actions" -ForegroundColor Cyan
+Write-Host "  https://github.com/$REPO/actions"
 Write-Host ""
