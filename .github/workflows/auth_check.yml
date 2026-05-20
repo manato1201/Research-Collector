@@ -3,14 +3,16 @@ name: Weekly Auth Check
 on:
   schedule:
     # 毎週日曜 AM 5:00 JST = UTC 土曜 20:00
-    # daily_collect（UTC 21:00）の1時間前に実行
     - cron: '0 20 * * 0'
   workflow_dispatch:
 
 jobs:
   auth-check:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    permissions:
+      contents: write   # storage_state.json 更新後のSecret更新
+      issues: write     # Issue作成・クローズ
 
     steps:
       - name: Checkout
@@ -22,25 +24,162 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install "notebooklm-py"
+        run: |
+          pip install "notebooklm-py[browser]"
+          playwright install chromium
+          playwright install-deps
+          sudo apt-get install -y expect
 
-      - name: Check NotebookLM auth
+      # ── 現在のCookieで認証チェック ──────────────────────────
+      - name: Check current auth
+        id: auth_check
         env:
           NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
         run: |
-          python main.py --mode check
-          echo "✅ 認証OK - 今週のデイリー収集は正常に動作します"
+          python main.py --mode check && echo "auth_ok=true" >> $GITHUB_OUTPUT || echo "auth_ok=false" >> $GITHUB_OUTPUT
+        continue-on-error: true
 
-      # 認証チェック失敗時はGitHubがデフォルトでメール通知を送る
-      # 追加でissueを自動作成する場合は以下を有効化
-      # - name: Create issue on auth failure
-      #   if: failure()
-      #   uses: actions/github-script@v7
-      #   with:
-      #     script: |
-      #       github.rest.issues.create({
-      #         owner: context.repo.owner,
-      #         repo: context.repo.repo,
-      #         title: '🔐 NotebookLM 認証切れ - 再ログインが必要です',
-      #         body: `## 認証が切れています\n\nWSL2で以下を実行してSecretを更新してください。\n\n\`\`\`bash\nbash refresh_auth.sh\n\`\`\`\n\n[Secrets設定ページ](https://github.com/${context.repo.owner}/${context.repo.repo}/settings/secrets/actions)`
-      #       })
+      # ── 認証OKなら終了 ─────────────────────────────────────
+      - name: Auth is valid
+        if: steps.auth_check.outputs.auth_ok == 'true'
+        run: echo "✅ 認証は有効です。再ログイン不要です。"
+
+      # ── 認証切れなら自動再ログインを試みる ─────────────────
+      - name: Restore current storage_state.json
+        if: steps.auth_check.outputs.auth_ok == 'false'
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          mkdir -p ~/.notebooklm
+          echo "$NOTEBOOKLM_AUTH_JSON" > ~/.notebooklm/storage_state.json
+          echo "storage_state.json restored"
+
+      - name: Try auto re-login with existing account
+        if: steps.auth_check.outputs.auth_ok == 'false'
+        id: auto_login
+        run: |
+          # expect で "1" を自動入力してログインを試みる
+          # （既存アカウントが残っていれば "1" で自動選択できる）
+          result=$(expect -c '
+            set timeout 60
+            spawn notebooklm login
+            expect {
+              "Press ENTER" {
+                send "1\r"
+                expect {
+                  "Authentication saved" { exit 0 }
+                  "Error" { exit 1 }
+                  timeout { exit 1 }
+                }
+              }
+              timeout { exit 1 }
+            }
+          ' 2>&1)
+          echo "Login result: $result"
+
+          # storage_state.json が更新されたか確認
+          if [ -f ~/.notebooklm/storage_state.json ]; then
+            python -c "
+          import asyncio, os, json, tempfile
+          from notebooklm import NotebookLMClient
+
+          async def check():
+              auth = open(os.path.expanduser('~/.notebooklm/storage_state.json')).read()
+              tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+              tmp.write(auth)
+              tmp.close()
+              try:
+                  async with await NotebookLMClient.from_storage(path=tmp.name) as c:
+                      nbs = await c.notebooks.list()
+                      print(f'auth_ok: {len(nbs)} notebooks')
+                      return True
+              except Exception as e:
+                  print(f'auth_failed: {e}')
+                  return False
+
+          result = asyncio.run(check())
+          exit(0 if result else 1)
+          " && echo "auto_login_ok=true" >> $GITHUB_OUTPUT || echo "auto_login_ok=false" >> $GITHUB_OUTPUT
+          else
+            echo "auto_login_ok=false" >> $GITHUB_OUTPUT
+          fi
+        continue-on-error: true
+
+      # ── 自動再ログイン成功 → SecretをCIから更新 ──────────
+      - name: Update secret with new cookie
+        if: steps.auth_check.outputs.auth_ok == 'false' && steps.auto_login.outputs.auto_login_ok == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          NEW_JSON=$(cat ~/.notebooklm/storage_state.json | python3 -c \
+            "import sys,json; print(json.dumps(json.load(sys.stdin)))")
+          echo "$NEW_JSON" | gh secret set NOTEBOOKLM_AUTH_JSON --repo ${{ github.repository }}
+          echo "✅ NOTEBOOKLM_AUTH_JSON を自動更新しました"
+
+      # ── 自動再ログイン成功 → Issue があればクローズ ───────
+      - name: Close auth-expired issue if exists
+        if: steps.auth_check.outputs.auth_ok == 'false' && steps.auto_login.outputs.auto_login_ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'auth-expired'
+            });
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '✅ GitHub Actionsによる自動再ログインが成功しました。Secretを自動更新しました。'
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed'
+              });
+            }
+            console.log('Auto re-login succeeded. Issues closed.');
+
+      # ── 自動再ログイン失敗 → Issue作成して手動対応を促す ──
+      - name: Create issue for manual intervention
+        if: steps.auth_check.outputs.auth_ok == 'false' && steps.auto_login.outputs.auto_login_ok != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'auth-expired'
+            });
+            if (issues.data.length === 0) {
+              const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const body = [
+                '## \u8a8d\u8a3c\u5207\u308c\uff08\u81ea\u52d5\u518d\u30ed\u30b0\u30a4\u30f3\u5931\u6557\uff09',
+                '',
+                'GitHub Actions\u306b\u3088\u308b\u81ea\u52d5\u518d\u30ed\u30b0\u30a4\u30f3\u306b\u5931\u6557\u3057\u307e\u3057\u305f\u3002',
+                '\u624b\u52d5\u5bfe\u5fdc\u304c\u5fc5\u8981\u3067\u3059\u3002',
+                '',
+                'PowerShell\u3067\u4ee5\u4e0b\u3092\u5b9f\u884c\u3057\u3066\u304f\u3060\u3055\u3044\uff1a',
+                '',
+                '```powershell',
+                '.\\refresh_auth.ps1',
+                '```',
+                '',
+                `**\u5b9f\u884c\u30ed\u30b0:** [Actions #${context.runNumber}](${runUrl})`,
+                '',
+                '\u5bfe\u51e6\u5b8c\u4e86\u5f8c\u3001\u3053\u306eIssue\u3092\u9589\u3058\u3066\u304f\u3060\u3055\u3044\u3002'
+              ].join('\n');
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '\ud83d\udd10 NotebookLM\u8a8d\u8a3c\u5207\u308c - \u624b\u52d5\u518d\u30ed\u30b0\u30a4\u30f3\u304c\u5fc5\u8981\u3067\u3059',
+                labels: ['auth-expired'],
+                body: body
+              });
+              console.log('Manual intervention required. Issue created.');
+            }
