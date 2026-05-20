@@ -253,4 +253,4 @@ MIT License
 
 ---
 
-*Created by 松浦真聖 (TK230178) — Tokyo International University of Technology*
+*Created by 松浦真聖 *
