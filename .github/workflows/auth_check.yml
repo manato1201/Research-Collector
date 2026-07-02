@@ -26,7 +26,55 @@ jobs:
       - name: Install dependencies
         run: pip install "notebooklm-py"
 
-      # ── 認証チェック ────────────────────────────────────────
+      # ── Cookie残日数の事前検知 ──────────────────────────────
+      - name: Check cookie expiry
+        id: expiry_check
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: python -m nbklm.auth_monitor
+
+      - name: Create issue on upcoming expiry
+        if: steps.expiry_check.outputs.needs_refresh == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const daysRemaining = "${{ steps.expiry_check.outputs.days_remaining }}";
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'refresh-soon'
+            });
+            if (issues.data.length === 0) {
+              const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+              const body = [
+                '## ⏰ NotebookLM認証の事前通知',
+                '',
+                `Cookieの残日数が ${daysRemaining} 日 です。`,
+                '失効前に以下を実行してください（今週中を目安）：',
+                '',
+                '```powershell',
+                'cd C:\\Users\\matuu\\Desktop\\GameDevelopment\\Research-Collector',
+                '.\\refresh_auth.ps1',
+                '```',
+                '',
+                `**実行ログ:** [Actions #${context.runNumber}](${runUrl})`,
+                '',
+                '対処完了後は refresh_auth.ps1 が自動でこのIssueを閉じます。'
+              ].join('\n');
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `⏰ NotebookLM認証、残り${daysRemaining}日で失効 - 事前更新を推奨`,
+                labels: ['refresh-soon'],
+                body: body
+              });
+              console.log('Issue created.');
+            } else {
+              console.log('refresh-soon issue already exists, skipping.');
+            }
+
+      # ── 認証チェック(リアクティブ) ──────────────────────────
       - name: Check NotebookLM auth
         id: auth_check
         env:
