@@ -12,18 +12,13 @@ notebooklm login
 # → C:\Users\<name>\.notebooklm\storage_state.json が生成される
 ```
 
-### storage_state.json を Base64 エンコード
+### storage_state.json を Secret 用テキストに変換
 
-**PowerShell:**
+`refresh_auth.ps1` と同じ変換（JSONをそのまま圧縮文字列化。Base64エンコードは不要）:
+
 ```powershell
-[Convert]::ToBase64String(
-  [IO.File]::ReadAllBytes("C:\Users\matuu\.notebooklm\storage_state.json")
-) | Set-Clipboard
-```
-
-**WSL2:**
-```bash
-base64 -w 0 /mnt/c/Users/matuu/.notebooklm/storage_state.json | xclip -selection clipboard
+(Get-Content "C:\Users\matuu\.notebooklm\storage_state.json" -Raw |
+  ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10) | Set-Clipboard
 ```
 
 ## 2. GitHub Secrets の登録
@@ -32,18 +27,20 @@ base64 -w 0 /mnt/c/Users/matuu/.notebooklm/storage_state.json | xclip -selection
 
 | Secret 名 | 内容 |
 |---|---|
-| `NOTEBOOKLM_STORAGE_STATE` | storage_state.json の Base64 文字列 |
-| `NOTION_TOKEN` | Notion Integration Token |
+| `NOTEBOOKLM_AUTH_JSON` | 上記で生成した storage_state.json の圧縮JSON文字列（Base64ではなく生JSON） |
+| `NOTEBOOKLM_WEEKLY_DIGEST_ID` | `notebooklm create "Weekly-Digest"` で作成したノートブックID |
+| `NOTION_TOKEN` | Notion Integration Token（任意） |
 | `ANTHROPIC_API_KEY` | Anthropic API Key |
 
-## 3. ノートブック ID（作成済み）
+## 3. ノートブックの扱い
 
-| ノートブック | ID |
-|---|---|
-| Game-Dev-Tech | `58d77b83-1320-4232-8029-778e4bf9991a` |
-| Graphics-Research | `b54469a1-bf3c-4da5-9f6b-0e86b6d16e26` |
-| Software-Engineering | `35612c0b-0e70-4744-a171-9106dc7497bf` |
-| Weekly-Digest | `0942eb24-05f7-45e5-a3d9-1f67e1c5ca0a` |
+カテゴリ別ノートブック（Game-Dev-Tech / Graphics-Research / Software-Engineering）は
+**事前作成不要**。`nbklm/client.py` が実行時に `Game-Dev-Tech-{YYYY}-{WNN}` のような
+週次名で自動的に検索し、なければ自動作成する（`nbklm/notebook_ids.py` の
+`CATEGORY_TO_NOTEBOOK_NAME` テンプレートで名前を管理）。
+
+事前に用意が必要なのは `Weekly-Digest` ノートブックのみ。作成したら発行された
+IDを `NOTEBOOKLM_WEEKLY_DIGEST_ID` Secretに登録する。
 
 ## 4. ローカル動作確認
 
@@ -61,12 +58,11 @@ python main.py --mode weekly
 ## 5. Cookieの期限切れ対処
 
 Google セッションは数週間〜数ヶ月で失効します。
-GitHub Actions が失敗したら以下を再実行して Secret を更新してください。
+GitHub Actions が失敗した、または `refresh-soon` ラベルのIssueが作成されたら
+`refresh_auth.ps1` を再実行してください（ログイン〜Secret更新〜Issueクローズまで自動）。
 
 ```powershell
-notebooklm login
-# → storage_state.json を再生成
-# → Base64 エンコードして GitHub Secret を上書き
+.\refresh_auth.ps1
 ```
 
 ## 6. NotebookLM との連携フロー
