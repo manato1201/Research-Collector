@@ -42,13 +42,14 @@ if ($ghExists) {
         $json | gh secret set NOTEBOOKLM_AUTH_JSON --repo $REPO
         Write-Host "  OK: Secret updated"
 
-        $issueJson = gh issue list --repo $REPO --label "auth-expired" --state open --json number 2>$null
-        if ($issueJson) {
-            $issues = $issueJson | ConvertFrom-Json
-            if ($issues.Count -gt 0) {
-                $num = $issues[0].number
-                gh issue close $num --repo $REPO --comment "Re-authenticated."
-                Write-Host "  OK: Issue #$num closed"
+        foreach ($label in @("auth-expired", "refresh-soon")) {
+            $issueJson = gh issue list --repo $REPO --label $label --state open --json number 2>$null
+            if ($issueJson) {
+                $issues = $issueJson | ConvertFrom-Json
+                foreach ($issue in $issues) {
+                    gh issue close $issue.number --repo $REPO --comment "Re-authenticated."
+                    Write-Host "  OK: Issue #$($issue.number) closed ($label)"
+                }
             }
         }
     } else {
