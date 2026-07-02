@@ -20,6 +20,18 @@ logger = logging.getLogger(__name__)
 DEFAULT_STORAGE_PATH = Path.home() / ".notebooklm" / "storage_state.json"
 WARNING_THRESHOLD_DAYS = 10
 
+try:
+    # notebooklm-py本体が実際に必須とするCookie名と同じ定義を使う。
+    # OTZ / NID / _ga* / __Secure-*SIDRTS 等は数日〜1週間で自動ローテーションする
+    # 補助Cookieであり、これらのexpiresを見ると常に「まもなく失効」と誤検知する。
+    from notebooklm.auth import MINIMUM_REQUIRED_COOKIES
+except ImportError:
+    MINIMUM_REQUIRED_COOKIES = {"SID"}
+
+# notebooklm-pyのextract_cookies_from_storage()と同じ優先順位:
+# リージョン別ドメイン(.google.co.jp等)より.google.comの値を優先する
+PREFERRED_DOMAIN = ".google.com"
+
 
 def load_storage_state() -> dict:
     """NOTEBOOKLM_AUTH_JSON環境変数、なければデフォルトパスから読み込む"""
@@ -31,24 +43,26 @@ def load_storage_state() -> dict:
 
 def check_cookie_expiry(storage_state: dict) -> tuple[int, bool]:
     """
-    Cookie群のexpires最小値から残日数を計算する。
-    Google認証系(google.comドメイン)のCookieのみを対象にする。
+    実際の認証に必須なCookie(SID等、notebooklm.auth.MINIMUM_REQUIRED_COOKIES)の
+    expiresから残日数を計算する。
 
     戻り値: (days_remaining, needs_refresh)
-    有効期限付きCookieが1つも見つからない場合は判定不能とみなし、
+    必須Cookieが1つも見つからない場合は判定不能とみなし、
     安全側に倒して (0, True) を返す。
     """
-    cookies = storage_state.get("cookies", [])
-    expires_list = [
-        c["expires"]
-        for c in cookies
-        if "google.com" in c.get("domain", "") and c.get("expires", -1) > 0
+    cookies = [
+        c
+        for c in storage_state.get("cookies", [])
+        if c.get("name") in MINIMUM_REQUIRED_COOKIES and c.get("expires", -1) > 0
     ]
 
-    if not expires_list:
+    if not cookies:
         return 0, True
 
-    min_expires = min(expires_list)
+    preferred = [c for c in cookies if c.get("domain") == PREFERRED_DOMAIN]
+    target = preferred if preferred else cookies
+
+    min_expires = min(c["expires"] for c in target)
     days_remaining = int((min_expires - time.time()) // 86400)
     needs_refresh = days_remaining < WARNING_THRESHOLD_DAYS
     return days_remaining, needs_refresh
