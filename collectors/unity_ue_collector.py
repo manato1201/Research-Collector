@@ -7,7 +7,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import feedparser
+from .retry import fetch_feed
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +16,9 @@ UNITY_FEEDS = [
     ("https://unity.com/releases/lts-vs-tech-stream/feed",   "unity",  "unity_release"),
 ]
 
+# UE Forum (forums.unrealengine.com/latest.rss) はBot弾きで失敗率が高いため除外済み(DOCUMENT.md参照)
 UNREAL_FEEDS = [
     ("https://www.unrealengine.com/en-US/rss",               "unreal", "ue_blog"),
-    ("https://forums.unrealengine.com/latest.rss",           "unreal", "ue_forum"),
 ]
 
 ALL_FEEDS = UNITY_FEEDS + UNREAL_FEEDS
@@ -45,7 +45,7 @@ def collect(max_per_feed: int = 10) -> list[dict]:
 
     for feed_url, source_type, platform in ALL_FEEDS:
         try:
-            feed = feedparser.parse(feed_url)
+            feed = fetch_feed(feed_url)
             entries = feed.entries[:max_per_feed]
             logger.info(f"[{platform}] {len(entries)} entries")
 

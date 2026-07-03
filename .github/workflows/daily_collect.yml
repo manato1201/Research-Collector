@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: read
+      contents: write
       issues: write
 
     steps:
@@ -64,6 +64,20 @@ jobs:
           name: collect-log-${{ github.run_number }}
           path: output/
           retention-days: 14
+
+      - name: Update health status
+        if: always()
+        run: python scripts/update_readme_health.py
+
+      - name: Commit health status
+        if: always()
+        continue-on-error: true
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add health.json README.md
+          git diff --cached --quiet || git commit -m "chore: update health status [skip ci]"
+          git push
 
       - name: Create issue on failure
         if: failure()

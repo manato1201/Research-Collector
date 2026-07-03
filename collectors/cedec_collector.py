@@ -9,9 +9,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import feedparser
 import urllib.request
 from html.parser import HTMLParser
+
+from .retry import fetch_feed, retry
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,16 @@ class _CEDiLParser(HTMLParser):
             self._capturing = False
 
 
+@retry(times=3, base_delay=2.0)
+def _fetch_cedil_html() -> str:
+    req = urllib.request.Request(
+        CEDIL_TOP_URL,
+        headers={"User-Agent": "Mozilla/5.0 (research-collector bot)"},
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return resp.read().decode("utf-8", errors="replace")
+
+
 def collect_cedil(max_items: int = 30) -> list[dict]:
     """
     CEDiL トップページから新着セッションを収集する。
@@ -99,13 +110,7 @@ def collect_cedil(max_items: int = 30) -> list[dict]:
     seen_hashes = set()
 
     try:
-        req = urllib.request.Request(
-            CEDIL_TOP_URL,
-            headers={"User-Agent": "Mozilla/5.0 (research-collector bot)"},
-        )
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            html = resp.read().decode("utf-8", errors="replace")
-
+        html = _fetch_cedil_html()
         parser = _CEDiLParser()
         parser.feed(html)
         sessions = parser.sessions[:max_items]
@@ -144,7 +149,7 @@ def collect_cedec_youtube(max_items: int = 20) -> list[dict]:
     seen_hashes = set()
 
     try:
-        feed = feedparser.parse(CEDEC_YOUTUBE_RSS)
+        feed = fetch_feed(CEDEC_YOUTUBE_RSS)
         entries = feed.entries[:max_items]
         logger.info(f"[CEDEC YouTube] {len(entries)} videos found")
 

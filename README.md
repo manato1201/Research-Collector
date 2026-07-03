@@ -41,6 +41,19 @@
 
 ---
 
+## 運用ステータス
+
+<!-- HEALTH_START -->
+| 実行 | 最終実行 | 詳細 |
+|---|---|---|
+| Daily Collect | - | - |
+| Weekly Digest | - | - |
+<!-- HEALTH_END -->
+
+*daily_collect / weekly_digest 実行のたびに自動更新されます。*
+
+---
+
 ## セットアップ（所要時間: 約45分）
 
 ### 必要なもの
@@ -222,8 +235,12 @@ research-collector/
 ├── nbklm/
 │   ├── client.py
 │   ├── notebook_ids.py        # ← セットアップ時に編集
-│   └── seen_urls.py
+│   ├── seen_urls.py
+│   └── auth_monitor.py        # Cookie残日数の事前検知
+├── scripts/
+│   └── update_readme_health.py # health.json → README運用ステータス表を更新
 ├── main.py
+├── health.py                  # 実行結果を health.json に記録
 ├── requirements.txt
 ├── refresh_auth.ps1           # 認証更新スクリプト（PowerShell）
 ├── run_auth_refresh.bat       # タスクスケジューラ起動用バッチ
