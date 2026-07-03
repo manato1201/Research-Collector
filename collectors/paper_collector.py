@@ -14,7 +14,8 @@ import urllib.parse
 import urllib.request
 import json
 from datetime import datetime, timezone
-from typing import Optional
+
+from .retry import retry
 
 logger = logging.getLogger(__name__)
 
@@ -69,30 +70,24 @@ def _url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-def _fetch_json(url: str, timeout: int = 15) -> Optional[dict]:
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "research-collector/1.0 (graduation thesis bot)"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except Exception as e:
-        logger.warning(f"fetch failed: {url[:80]} → {e}")
-        return None
+@retry(times=3, base_delay=2.0)
+def _fetch_json(url: str, timeout: int = 15) -> dict:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "research-collector/1.0 (graduation thesis bot)"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode("utf-8"))
 
 
-def _fetch_xml(url: str, timeout: int = 15) -> Optional[str]:
-    try:
-        req = urllib.request.Request(
-            url,
-            headers={"User-Agent": "research-collector/1.0 (graduation thesis bot)"},
-        )
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return resp.read().decode("utf-8")
-    except Exception as e:
-        logger.warning(f"fetch failed: {url[:80]} → {e}")
-        return None
+@retry(times=3, base_delay=2.0)
+def _fetch_xml(url: str, timeout: int = 15) -> str:
+    req = urllib.request.Request(
+        url,
+        headers={"User-Agent": "research-collector/1.0 (graduation thesis bot)"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8")
 
 
 # ------------------------------------------------------------------ #
@@ -163,8 +158,10 @@ def collect_arxiv(max_per_query: int = 5) -> list[dict]:
         })
         url = f"{ARXIV_API}?{params}"
 
-        xml_text = _fetch_xml(url)
-        if not xml_text:
+        try:
+            xml_text = _fetch_xml(url)
+        except Exception as e:
+            logger.warning(f"[arXiv] fetch failed after retries: {url[:80]} → {e}")
             continue
 
         papers = _parse_arxiv_xml(xml_text)
@@ -213,8 +210,10 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"
 
-        data = _fetch_json(url)
-        if not data:
+        try:
+            data = _fetch_json(url)
+        except Exception as e:
+            logger.warning(f"[S2] fetch failed after retries: {url[:80]} → {e}")
             continue
 
         papers = data.get("data", [])

@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-import feedparser
+from .retry import fetch_feed
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ def collect(max_per_feed: int = 20) -> list[dict]:
 
     for feed_url, source_type, platform in ALL_FEEDS:
         try:
-            feed = feedparser.parse(feed_url)
+            feed = fetch_feed(feed_url)
             entries = feed.entries[:max_per_feed]
             logger.info(f"[{platform}] {feed_url}: {len(entries)} entries")
 
