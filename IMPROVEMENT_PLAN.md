@@ -151,9 +151,16 @@ Googleの不正検知によるセッション強制失効**である可能性が
 5. **(検討)self-hosted runner / Docker化**: GitHub Actionsの制約(30分タイムアウト・cron停止)を回避したい場合のみ
 
 **検証チェックリスト:**
-- [ ] ネットワーク断をシミュレートしてリトライ動作を確認
-- [ ] weekly_digest失敗時にIssueが作成される
-- [ ] 1週間の無人運用でIssueゼロ(または自動クローズ済み)を確認
+- [x] ネットワーク断をシミュレートしてリトライ動作を確認(合成関数で3回リトライ→例外送出をローカル確認済み)
+- [ ] weekly_digest失敗時にIssueが作成される — **要実機確認**
+- [ ] 1週間の無人運用でIssueゼロ(または自動クローズ済み)を確認 — **要実機確認**
+
+**実装状況(2026-07-03): コード実装完了。**
+- `collectors/retry.py` 新規作成(指数バックオフ3回リトライ)。全collector(zenn_qiita/unity_ue/cedec/paper)のネットワーク取得部分に適用
+- UE Forumフィード(`forums.unrealengine.com`)を`unity_ue_collector.py`から削除(Bot弾きで恒常的に失敗するため)
+- `weekly_digest.yml` に失敗時Issue作成ステップを追加(`weekly-digest-failed`ラベル、`permissions: contents: write / issues: write`)
+- ヘルスダッシュボード: `health.py`(実行結果記録)+ `scripts/update_readme_health.py`(README自動更新)を新規作成。`main.py`のrun_daily/run_weeklyに記録処理を追加。daily_collect.yml/weekly_digest.ymlに health.json・README.md の自動コミットステップを追加
+- 残タスク: 実際のGitHub Actions実行での動作確認(ローカルからは実行できないため、次回のワークフロー実行で確認が必要)
 
 ---
 

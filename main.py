@@ -40,10 +40,13 @@ def run_check():
 def run_daily():
     logger.info("=== Daily Collect Start ===")
 
+    from health import write_health
+
     # 1. 認証確認
     from nbklm import check_auth
     if not check_auth():
         logger.error("Auth failed. Aborting.")
+        write_health("daily", "error", error="auth failed")
         sys.exit(1)
 
     all_articles = []
@@ -92,6 +95,7 @@ def run_daily():
 
     if not all_articles:
         logger.warning("No articles collected. Exiting.")
+        write_health("daily", "ok", collected=0, new=0)
         return
 
     # 6. 同一実行内の重複除去
@@ -111,6 +115,7 @@ def run_daily():
     if not new_articles:
         logger.info("All articles already seen. Nothing to add.")
         # seen_urls.txt は変更なし
+        write_health("daily", "ok", collected=len(all_articles), new=0)
         return
 
     logger.info(f"New articles to add: {len(new_articles)}")
@@ -131,6 +136,16 @@ def run_daily():
 
     # 10. Notion へ保存（任意）
     _save_to_notion(new_articles)
+
+    write_health(
+        "daily",
+        "ok",
+        collected=len(all_articles),
+        new=len(new_articles),
+        notebooklm_ok=result["ok"],
+        notebooklm_skip=result["skip"],
+        notebooklm_errors=len(result["errors"]),
+    )
 
     logger.info("=== Daily Collect Done ===")
 
@@ -153,12 +168,14 @@ def _save_to_notion(articles: list[dict]):
 def run_weekly():
     logger.info("=== Weekly Digest Start ===")
 
+    from health import write_health
     from nbklm import generate_weekly_digest
 
     report_md = generate_weekly_digest()
 
     if not report_md:
         logger.error("Weekly digest generation failed.")
+        write_health("weekly", "error", error="digest generation failed")
         sys.exit(1)
 
     date_str = datetime.now().strftime("%Y-%m-%d")
@@ -170,6 +187,7 @@ def run_weekly():
     logger.info(f"Saved: {output_path} ({len(report_md)} chars)")
 
     _save_digest_to_notion(report_md, date_str)
+    write_health("weekly", "ok", chars=len(report_md))
     logger.info("=== Weekly Digest Done ===")
 
 
