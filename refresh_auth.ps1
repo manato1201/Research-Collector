@@ -1,5 +1,8 @@
 $REPO = "manato1201/Research-Collector"
-$STORAGE_PATH = "$env:USERPROFILE\.notebooklm\storage_state.json"
+# notebooklm-py 0.7.3以降はプロファイル形式(~/.notebooklm/profiles/<profile>/storage_state.json)
+# に保存先が変わった。移行前は旧パス(~/.notebooklm/storage_state.json)のままのため両対応する。
+$LEGACY_STORAGE_PATH  = "$env:USERPROFILE\.notebooklm\storage_state.json"
+$PROFILE_STORAGE_PATH = "$env:USERPROFILE\.notebooklm\profiles\default\storage_state.json"
 
 Write-Host "======================================"
 Write-Host "  NotebookLM Auth Refresh"
@@ -24,11 +27,15 @@ notebooklm login
 # Step 3: Check file
 Write-Host ""
 Write-Host "[3/5] Checking auth file..."
-if (-not (Test-Path $STORAGE_PATH)) {
+if (Test-Path $PROFILE_STORAGE_PATH) {
+    $STORAGE_PATH = $PROFILE_STORAGE_PATH
+} elseif (Test-Path $LEGACY_STORAGE_PATH) {
+    $STORAGE_PATH = $LEGACY_STORAGE_PATH
+} else {
     Write-Host "  ERROR: file not found."
     exit 1
 }
-Write-Host "  OK"
+Write-Host "  OK: $STORAGE_PATH"
 
 # Step 4: Update secret
 Write-Host ""

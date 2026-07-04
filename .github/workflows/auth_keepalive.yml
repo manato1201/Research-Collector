@@ -1,0 +1,48 @@
+name: Auth Keepalive
+
+# NotebookLMのセッション用Cookie(__Secure-1PSIDTS)は15〜20分ごとに
+# ローテーションしないと失効する。notebooklm-py 0.7.3 の `auth refresh` で
+# 定期的にローテーションさせ、その結果をSecretへ書き戻す。
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install notebooklm-py
+        run: pip install "notebooklm-py==0.7.3"
+
+      - name: Write current auth to default storage path
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          mkdir -p ~/.notebooklm
+          python -c "
+          import json, os
+          data = json.loads(os.environ['NOTEBOOKLM_AUTH_JSON'])
+          with open(os.path.expanduser('~/.notebooklm/storage_state.json'), 'w', encoding='utf-8') as f:
+              json.dump(data, f)
+          "
+
+      - name: Refresh session (rotate cookies)
+        run: notebooklm auth refresh -q
+
+      - name: Update NOTEBOOKLM_AUTH_JSON secret with rotated cookies
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+        run: |
+          python -c "
+          import json, os
+          with open(os.path.expanduser('~/.notebooklm/storage_state.json'), encoding='utf-8') as f:
+              print(json.dumps(json.load(f), separators=(',', ':')))
+          " | gh secret set NOTEBOOKLM_AUTH_JSON --repo ${{ github.repository }}

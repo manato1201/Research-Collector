@@ -27,7 +27,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install feedparser requests python-dotenv
-          pip install "notebooklm-py"
+          pip install "notebooklm-py==0.7.3"
 
       # ── 認証チェック ────────────────────────────────────────
       - name: Check auth

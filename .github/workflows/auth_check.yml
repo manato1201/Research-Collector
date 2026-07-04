@@ -24,7 +24,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install "notebooklm-py"
+        run: pip install "notebooklm-py==0.7.3"
 
       # ── Cookie残日数の事前検知 ──────────────────────────────
       - name: Check cookie expiry
