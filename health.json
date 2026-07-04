@@ -7,5 +7,10 @@
     "notebooklm_ok": 166,
     "notebooklm_skip": 2,
     "notebooklm_errors": 2
+  },
+  "weekly": {
+    "status": "ok",
+    "run_at": "2026-07-04T13:57:18Z",
+    "chars": 11242
   }
 }
