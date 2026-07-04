@@ -37,6 +37,11 @@ jobs:
       - name: Refresh session (rotate cookies)
         run: notebooklm auth refresh -q
 
+      - name: Debug secret presence
+        env:
+          TESTVAR: ${{ secrets.GH_PAT_SECRETS_WRITE }}
+        run: echo "length=${#TESTVAR}"
+
       - name: Update NOTEBOOKLM_AUTH_JSON secret with rotated cookies
         env:
           GH_TOKEN: ${{ secrets.GH_PAT_SECRETS_WRITE }}
