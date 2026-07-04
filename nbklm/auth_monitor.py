@@ -17,7 +17,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STORAGE_PATH = Path.home() / ".notebooklm" / "storage_state.json"
+_LEGACY_STORAGE_PATH = Path.home() / ".notebooklm" / "storage_state.json"
+_PROFILE_STORAGE_PATH = Path.home() / ".notebooklm" / "profiles" / "default" / "storage_state.json"
 WARNING_THRESHOLD_DAYS = 10
 
 try:
@@ -38,7 +39,8 @@ def load_storage_state() -> dict:
     auth_json = os.environ.get("NOTEBOOKLM_AUTH_JSON", "").strip()
     if auth_json:
         return json.loads(auth_json)
-    return json.loads(DEFAULT_STORAGE_PATH.read_text(encoding="utf-8"))
+    path = _PROFILE_STORAGE_PATH if _PROFILE_STORAGE_PATH.exists() else _LEGACY_STORAGE_PATH
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def check_cookie_expiry(storage_state: dict) -> tuple[int, bool]:

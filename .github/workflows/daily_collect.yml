@@ -26,7 +26,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install feedparser requests python-dotenv
-          pip install "notebooklm-py"
+          pip install "notebooklm-py==0.7.3"
 
       - name: Download previous seen_urls.txt
         uses: actions/download-artifact@v4
