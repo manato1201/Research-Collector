@@ -372,3 +372,18 @@ async def check_auth_async() -> bool:
 
 def check_auth() -> bool:
     return asyncio.run(check_auth_async())
+
+
+# ------------------------------------------------------------------ #
+#  ノートブック容量上限の自動対応
+# ------------------------------------------------------------------ #
+
+async def cleanup_notebooks_async() -> list[str]:
+    from .notebook_cleanup import cleanup_oldest_notebooks_async
+
+    async with await _make_client() as client:
+        return await cleanup_oldest_notebooks_async(client)
+
+
+def cleanup_notebooks() -> list[str]:
+    return asyncio.run(cleanup_notebooks_async())
