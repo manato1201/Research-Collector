@@ -31,6 +31,8 @@ def _row(mode_label: str, entry: dict) -> str:
             f"収集{entry.get('collected', 0)}件 / 新規{entry.get('new', 0)}件 / "
             f"NotebookLM追加{entry.get('notebooklm_ok', 0)}件"
         )
+        if entry.get("notebooks_deleted"):
+            detail += f" / 容量上限で{entry['notebooks_deleted']}冊自動削除"
     elif "chars" in entry:
         detail = f"{entry['chars']}文字生成"
     else:

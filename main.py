@@ -137,6 +137,19 @@ def run_daily():
     # 10. Notion へ保存（任意）
     _save_to_notion(new_articles)
 
+    # 11. ノートブック容量上限に近づいていたら古いものから自動削除
+    deleted_notebooks = []
+    try:
+        from nbklm import cleanup_notebooks
+        deleted_notebooks = cleanup_notebooks()
+        if deleted_notebooks:
+            logger.warning(
+                f"[notebook_cleanup] capacity limit: deleted {len(deleted_notebooks)} "
+                f"oldest notebooks: {deleted_notebooks}"
+            )
+    except Exception as e:
+        logger.error(f"Notebook cleanup failed: {e}")
+
     write_health(
         "daily",
         "ok",
@@ -145,6 +158,7 @@ def run_daily():
         notebooklm_ok=result["ok"],
         notebooklm_skip=result["skip"],
         notebooklm_errors=len(result["errors"]),
+        notebooks_deleted=len(deleted_notebooks),
     )
 
     logger.info("=== Daily Collect Done ===")
