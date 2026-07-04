@@ -43,6 +43,11 @@ jobs:
         run: |
           python -c "
           import json, os
-          with open(os.path.expanduser('~/.notebooklm/storage_state.json'), encoding='utf-8') as f:
+          # notebooklm-py 0.7.3はコマンド実行時に自動でプロファイル形式へ移行するため、
+          # legacyパスに書いたファイルもprofileパスへ移動している場合がある。両方確認する。
+          legacy_path = os.path.expanduser('~/.notebooklm/storage_state.json')
+          profile_path = os.path.expanduser('~/.notebooklm/profiles/default/storage_state.json')
+          path = profile_path if os.path.exists(profile_path) else legacy_path
+          with open(path, encoding='utf-8') as f:
               print(json.dumps(json.load(f), separators=(',', ':')))
           " | gh secret set NOTEBOOKLM_AUTH_JSON --repo ${{ github.repository }}
