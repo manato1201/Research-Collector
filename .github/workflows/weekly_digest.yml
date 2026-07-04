@@ -2,8 +2,10 @@ name: Weekly Research Digest
 
 on:
   schedule:
-    # 月曜 JST 7:00 = UTC 日曜 22:00
-    - cron: '0 22 * * 0'
+    # 2日に1回 JST 7:00 = UTC 22:00（前日）
+    # cronの日付フィールドはカレンダー日基準のため、月末をまたぐ時にまれに
+    # 連続実行になることがある（実用上は許容範囲として許容する）
+    - cron: '0 22 */2 * *'
   workflow_dispatch:
 
 jobs:
