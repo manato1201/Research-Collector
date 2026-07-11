@@ -90,26 +90,6 @@ jobs:
         if: steps.auth_check.outputs.auth_ok == 'true'
         run: echo "✅ 認証は有効です。今週のデイリー収集は正常に動作します。"
 
-      # ── 診断: ノートブックのソース数を確認(一時) ─────────────
-      - name: Debug notebook source counts
-        env:
-          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
-        run: |
-          python -c "
-          import asyncio
-          from nbklm.client import _make_client
-
-          async def main():
-              async with await _make_client() as client:
-                  notebooks = await client.notebooks.list()
-                  notebooks.sort(key=lambda nb: nb.sources_count, reverse=True)
-                  print(f'total notebooks: {len(notebooks)}')
-                  for nb in notebooks[:15]:
-                      print(f'{nb.sources_count:4d}  {nb.title}')
-
-          asyncio.run(main())
-          "
-
       # ── 認証切れ → Issue作成 ────────────────────────────────
       - name: Create issue on auth failure
         if: steps.auth_check.outputs.auth_ok == 'false'
