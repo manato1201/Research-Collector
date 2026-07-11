@@ -74,6 +74,31 @@ jobs:
               console.log('refresh-soon issue already exists, skipping.');
             }
 
+      # ── 一時: 満杯ノートブックのsource clean(dry-run) ────────
+      - name: Debug source clean dry-run
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          python -c "
+          import asyncio
+          from nbklm.client import _make_client
+
+          async def main():
+              async with await _make_client() as client:
+                  notebooks = await client.notebooks.list()
+                  full = [nb for nb in notebooks if nb.sources_count >= 290]
+                  print(f'target notebooks: {len(full)}')
+                  for nb in full:
+                      print(f'{nb.id}  {nb.sources_count:4d}  {nb.title}')
+
+          asyncio.run(main())
+          " > /tmp/full_notebooks.txt
+          cat /tmp/full_notebooks.txt
+          tail -n +2 /tmp/full_notebooks.txt | while read -r id count title; do
+            echo "=== dry-run: $title ($id) ==="
+            notebooklm source clean -n "$id" --dry-run --json || true
+          done
+
       # ── 認証チェック(リアクティブ) ──────────────────────────
       - name: Check NotebookLM auth
         id: auth_check
