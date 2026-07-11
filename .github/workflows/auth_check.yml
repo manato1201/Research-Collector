@@ -95,8 +95,8 @@ jobs:
           " > /tmp/full_notebooks.txt
           cat /tmp/full_notebooks.txt
           tail -n +2 /tmp/full_notebooks.txt | while read -r id count title; do
-            echo "=== dry-run: $title ($id) ==="
-            notebooklm source clean -n "$id" --dry-run --json || true
+            echo "=== clean: $title ($id) ==="
+            notebooklm source clean -n "$id" -y --json || true
           done
 
       # ── 認証チェック(リアクティブ) ──────────────────────────
