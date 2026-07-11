@@ -74,6 +74,25 @@ jobs:
               console.log('refresh-soon issue already exists, skipping.');
             }
 
+      # ── 一時: 現在のノートブック状態を確認 ────────────────────
+      - name: Debug current notebook state
+        env:
+          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
+        run: |
+          python -c "
+          import asyncio
+          from nbklm.client import _make_client
+
+          async def main():
+              async with await _make_client() as client:
+                  notebooks = await client.notebooks.list()
+                  w28 = [nb for nb in notebooks if 'W28' in nb.title]
+                  for nb in w28:
+                      print(f'{nb.title}: {nb.sources_count} sources, created_at={nb.created_at}')
+
+          asyncio.run(main())
+          "
+
       # ── 認証チェック(リアクティブ) ──────────────────────────
       - name: Check NotebookLM auth
         id: auth_check
