@@ -74,26 +74,6 @@ jobs:
               console.log('refresh-soon issue already exists, skipping.');
             }
 
-      # ── 一時: クリーンアップ後のソース数を確認 ───────────────
-      - name: Debug notebook source counts after cleanup
-        env:
-          NOTEBOOKLM_AUTH_JSON: ${{ secrets.NOTEBOOKLM_AUTH_JSON }}
-        run: |
-          python -c "
-          import asyncio
-          from nbklm.client import _make_client
-
-          async def main():
-              async with await _make_client() as client:
-                  notebooks = await client.notebooks.list()
-                  notebooks.sort(key=lambda nb: nb.sources_count, reverse=True)
-                  print(f'total notebooks: {len(notebooks)}')
-                  for nb in notebooks[:20]:
-                      print(f'{nb.sources_count:4d}  {nb.title}')
-
-          asyncio.run(main())
-          "
-
       # ── 認証チェック(リアクティブ) ──────────────────────────
       - name: Check NotebookLM auth
         id: auth_check
