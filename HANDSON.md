@@ -1,22 +1,31 @@
 # GitHub Actions × NotebookLM 自動情報収集システム
 ## ハンズオン資料
 
-> 作成者: 松浦真聖 (TK230178)  
-> 対象: エンジニア系学生  
-> 所要時間: 約60〜90分
+> 作成者: 松浦真聖 (TK230178)
+> 対象: エンジニア系学生
+> 所要時間: 約45〜60分
+> 最終更新: 2026-07-11
 
 ---
 
 ## はじめに
 
-このハンズオンでは、技術記事・CEDEC資料・論文を毎日自動収集してNotebookLMに蓄積するシステムを構築します。一度セットアップすれば、毎日AM6時に自動で動き続けます。
+このハンズオンでは、技術記事・CEDEC資料・論文を毎日自動収集してNotebookLMに蓄積するシステムを構築します。一度セットアップすれば、人手を介さずに動き続けます。
 
 **このシステムで実現できること**
 
 - Zenn/Qiita/Unity/UE/CEDECの新着記事を毎日自動収集
 - 卒論テーマに関連する論文を週2回自動収集
 - NotebookLMに蓄積してAI検索・ポッドキャスト生成が使える
-- 週次まとめレポートを自動生成
+- レポートを2日に1回自動生成
+- 認証切れ・容量超過・収集失敗を自動で検知して通知・自己修復
+
+**このハンズオンで学べること**（技術トピック）
+
+- GitHub Actionsのscheduleトリガーの使い方と制約
+- 非公式APIライブラリ（ブラウザCookieベース認証）の扱い方
+- 冪等性を意識した重複除去設計と、「動いているように見えて実は壊れている」バグの見つけ方
+- 障害を検知→通知→自己修復するパイプラインの作り方
 
 ---
 
@@ -26,13 +35,10 @@
 |---|---|
 | GitHubアカウント | privateリポジトリを作成する |
 | Googleアカウント | NotebookLM Plusが必要（月額約2,400円） |
-| Python 3.11以上 | Windows環境 |
-| WSL2（Ubuntu） | Linux環境でのログインに必要 |
-| Anthropic APIキー | https://console.anthropic.com で取得 |
+| Python 3.11以上 | Windows環境でOK |
+| GitHub CLI（`gh`） | https://cli.github.com/ |
 
-> **なぜWSL2が必要か？**  
-> `notebooklm-py` のCookieはLinux環境で取得する必要があります。  
-> GitHub Actions（Ubuntu）と同じ環境でログインすることで認証が通ります。
+> **WSL2は不要です。** 旧版の資料ではLinux環境でのログインを必須としていましたが、NotebookLMの認証Cookieの値自体はOSに依存しないため、Windows上で取得したCookieをそのままGitHub Actions（Linux）で使えます。
 
 ---
 
@@ -40,182 +46,202 @@
 
 ### Step 0: リポジトリのクローン
 
-```bash
-# 【Windows PowerShell】
-# GitHubでprivateリポジトリを作成後
+```powershell
 git clone https://github.com/あなたのユーザー名/research-collector.git
 cd research-collector
 ```
 
-配置するファイル構成は以下の通りです。
-
-```
-research-collector/
-├── .github/workflows/
-│   ├── daily_collect.yml
-│   └── weekly_digest.yml
-├── collectors/
-│   ├── zenn_qiita_collector.py
-│   ├── unity_ue_collector.py
-│   ├── cedec_collector.py
-│   └── paper_collector.py
-├── nbklm/
-│   ├── __init__.py
-│   ├── client.py
-│   ├── notebook_ids.py
-│   └── seen_urls.py
-├── .env
-├── .gitignore
-├── main.py
-└── requirements.txt
-```
-
----
-
 ### Step 1: 依存ライブラリのインストール
 
 ```powershell
-# 【Windows PowerShell】
 pip install feedparser requests python-dotenv
-pip install "notebooklm-py[browser]"
+pip install "notebooklm-py[browser]==0.7.3"
 playwright install chromium
 ```
 
----
+> バージョンを`==0.7.3`で固定しているのには理由があります。詳しくは [コラム: なぜバージョン固定が重要か](#コラム-なぜバージョン固定が重要か) を参照してください。
 
-### Step 2: NotebookLMへのログイン（WSL2で実施）
+### Step 2: NotebookLMへのログイン
 
-> ⚠️ **必ずWSL2（Linux）で実行してください。**  
-> WindowsのChromeで取得したCookieはGitHub Actions（Linux）では動きません。
-
-```bash
-# 【WSL2】
-pip install "notebooklm-py[browser]"
-playwright install chromium
+```powershell
 notebooklm login
 # ブラウザが開いたらGoogleにログインしてENTERを押す
-```
-
-ログインが成功すると `~/.notebooklm/storage_state.json` が生成されます。
-
----
-
-### Step 3: NotebookLMノートブックの作成
-
-週次ノートブックは自動作成されますが、固定ノートブックは手動で作成します。
-
-```bash
-# 【WSL2】
 notebooklm create "Weekly-Digest"
 # 表示されたIDをメモしておく
 ```
 
-表示されたIDを `nbklm/notebook_ids.py` の `NOTEBOOK_IDS_FIXED` に記入します。
+ログインが成功すると `~/.notebooklm/profiles/default/storage_state.json` が生成されます（0.7.3からプロファイル形式のパスに変わりました）。
 
-```python
-NOTEBOOK_IDS_FIXED = {
-    "weekly_digest": "ここにIDを貼り付ける",
-}
+### Step 3: GitHub Secretsの登録
+
+```powershell
+$json = (Get-Content "$env:USERPROFILE\.notebooklm\profiles\default\storage_state.json" -Raw |
+  ConvertFrom-Json | ConvertTo-Json -Compress -Depth 10)
+$json | gh secret set NOTEBOOKLM_AUTH_JSON --repo あなたのユーザー名/リポジトリ名
 ```
-
----
-
-### Step 4: GitHub Secretsの登録
-
-**① storage_state.json を1行JSONに圧縮してコピー**
-
-```bash
-# 【WSL2】
-cat ~/.notebooklm/storage_state.json | python3 -c \
-  "import sys,json; print(json.dumps(json.load(sys.stdin)))"
-# 出力された1行の文字列をコピー
-```
-
-**② GitHub Secretsに登録**
-
-`https://github.com/あなたのユーザー名/research-collector/settings/secrets/actions`
 
 | Secret名 | 内容 |
 |---|---|
-| `NOTEBOOKLM_AUTH_JSON` | 上記コマンドの出力（1行JSON） |
-| `ANTHROPIC_API_KEY` | `sk-ant-...` で始まるAPIキー |
+| `NOTEBOOKLM_AUTH_JSON` | 上記コマンドで登録 |
+| `NOTEBOOKLM_WEEKLY_DIGEST_ID` | Step 2でメモしたID |
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com で取得 |
 
-**③ ローカル用 `.env` ファイルの作成**
+**もう一つSecretが必要です。** セッションを15分おきに自動更新する仕組み（`auth_keepalive.yml`）がSecret自体を書き換えるため、専用の権限を持つトークンが必要です。
+
+```
+https://github.com/settings/personal-access-tokens/new を開く
+→ Repository access: 対象リポジトリのみ選択
+→ Permissions → Repository permissions → Secrets: Read and write
+→ トークンを発行してコピー
+```
 
 ```powershell
-# 【Windows】.env.exampleをコピーして編集
-copy .env.example .env
-notepad .env
+Get-Clipboard | gh secret set GH_PAT_SECRETS_WRITE --repo あなたのユーザー名/リポジトリ名
 ```
 
-```
-ANTHROPIC_API_KEY=sk-ant-...
-NOTION_TOKEN=ntn_...（任意）
-```
+> なぜ`GITHUB_TOKEN`（既定のトークン）ではダメなのか？ GitHub Actionsの既定トークンには、意図的に「Secretsを書き換える権限」が含まれていません（自分自身の認証情報を自分で書き換えられると、ワークフロー経由でリポジトリの機密情報を盗み出す攻撃に悪用できてしまうためです）。だからこそ、スコープを絞った専用トークンを別途用意する設計になっています。
 
----
+### Step 4: ラベル作成・Workflow permissions
+
+```
+/labels → New label で以下を作成: auth-expired, refresh-soon, weekly-digest-failed
+
+Settings → Actions → General → Workflow permissions
+→ Read and write permissions → Save
+```
 
 ### Step 5: ローカルで動作確認
 
 ```powershell
-# 【Windows PowerShell】
-
-# 認証確認
-python main.py --mode check
-# → [INFO] auth OK (7 notebooks) が出ればOK
-
-# 収集テスト
-python main.py --mode daily
-# → [INFO] === Daily Collect Done === が出ればOK
+python main.py --mode check   # 認証確認
+python main.py --mode daily   # 収集テスト
 ```
 
 出力例：
 ```
-2026-05-09 11:51:22 [INFO] === Daily Collect Start ===
-2026-05-09 11:51:23 [INFO] [NotebookLM] auth OK (7 notebooks)
-2026-05-09 11:51:24 [INFO] Zenn/Qiita: 52 articles
-2026-05-09 11:51:24 [INFO] Unity/UE: 18 articles
-2026-05-09 11:51:24 [INFO] CEDEC: 23 items
-2026-05-09 11:51:24 [INFO] Papers: skipped (runs Mon/Thu only)
-2026-05-09 11:51:24 [INFO] After in-run dedup: 89 articles
-2026-05-09 11:51:24 [INFO] [seen_urls] 89 new, 0 already seen
-2026-05-09 11:51:45 [INFO] NotebookLM: ok=134, skip=12, errors=12
-2026-05-09 11:51:45 [INFO] [seen_urls] saved 89 hashes
-2026-05-09 11:51:45 [INFO] === Daily Collect Done ===
+2026-07-11 04:20:13 [INFO] === Daily Collect Start ===
+2026-07-11 04:20:13 [INFO] [NotebookLM] auth OK (32 notebooks)
+2026-07-11 04:20:20 [INFO] Zenn/Qiita: 46 articles
+2026-07-11 04:20:21 [INFO] Unity/UE: 10 articles
+2026-07-11 04:20:21 [INFO] CEDEC: 25 items
+2026-07-11 04:20:21 [INFO] Papers: skipped (runs Mon/Thu only)
+2026-07-11 04:20:21 [INFO] Total collected: 81
+2026-07-11 04:20:21 [INFO] [seen_urls] 81 new, 0 already seen
+2026-07-11 04:20:53 [INFO] NotebookLM: ok=162, skip=0, errors=0
+2026-07-11 04:20:53 [INFO] [seen_urls] saved 81 hashes
+2026-07-11 04:20:53 [INFO] === Daily Collect Done ===
 ```
-
----
 
 ### Step 6: GitHubにpushして自動実行を有効化
 
 ```powershell
-# 【Windows PowerShell】
 git add .
 git commit -m "initial setup"
 git push origin main
 ```
 
-**GitHub Actionsで手動テスト**
+`Actions`タブ → `Daily Research Collect` → `Run workflow`で手動実行してテスト。
 
-`Actions` タブ → `Daily Research Collect` → `Run workflow`
+### Step 7: 認証の自動更新を有効化
 
-ログに `Daily Collect Done` が出てNotebookLMにノートブックが追加されていれば完成です！
+```powershell
+.\register_task.ps1
+```
+
+毎日AM5:30に認証更新を試みるタスクスケジューラを登録します（15分おきの`auth_keepalive.yml`と合わせた二段構えの保険です）。
 
 ---
 
-## 重複チェックの仕組み
+## システムの全体像
 
-同じ記事を毎日追加しないように `seen_urls.txt` でURLを管理しています。
+```mermaid
+flowchart LR
+    subgraph 収集
+        A["RSS/API収集<br/>(毎日AM6:00)"]
+    end
+    subgraph 重複除去
+        B["seen_urls.txt と照合<br/>(SHA256ハッシュ)"]
+    end
+    subgraph 蓄積
+        C["NotebookLM<br/>週次ノートブック"]
+    end
+    subgraph 活用
+        D["チャット検索"]
+        E["Audio Overview"]
+        F["レポート生成<br/>(2日に1回)"]
+    end
 
+    A --> B --> C --> D
+    C --> E
+    C --> F
 ```
-収集したURL
-  → SHA256でハッシュ化（先頭16文字）
-  → seen_urls.txt と照合
-  → 新規のみNotebookLMへ追加
-  → seen_urls.txt を更新してgit commit（永続化）
+
+### 重複チェックの仕組み
+
+同じ記事を毎日追加しないように`seen_urls.txt`でURLを管理しています。
+
+```mermaid
+sequenceDiagram
+    participant Feed as RSS/APIフィード
+    participant Main as main.py
+    participant Seen as seen_urls.txt
+
+    Main->>Feed: 各コレクターで収集
+    Feed-->>Main: 記事リスト（URL付き）
+    Main->>Main: URLをSHA256でハッシュ化
+    Main->>Seen: 既知のハッシュ集合を読み込み
+    Main->>Main: 差分（新規のみ）を抽出
+    Main->>Main: 新規のみNotebookLMへ追加
+    Main->>Seen: 更新したハッシュ集合を保存
+    Note over Seen: GitHub Actionsが実行のたびに<br/>Gitへ自動コミットして永続化
 ```
 
-GitHub Actionsが実行するたびに自動でコミットされるため、手動操作は不要です。
+**重要な設計判断**: この`seen_urls.txt`は必ず**Gitにコミットして永続化**してください。GitHub Actionsの一時ファイル領域やアーティファクト機能に頼ると、後述するインシデントのような「動いているように見えて実は毎回リセットされている」問題が起きます。
+
+---
+
+## コラム: なぜバージョン固定が重要か
+
+`requirements.txt`で`notebooklm-py[browser]==0.7.3`のように**厳密に**バージョンを固定しています。これは単なる慣習ではなく、実際に踏んだ問題に基づく判断です。
+
+非公式ライブラリ（Web UIの内部通信を模倣するタイプ）は、対象サービス（今回はNotebookLM）側の仕様変更に応じて頻繁に破壊的変更が入ります。実際、このプロジェクトでは`0.3.4`→`0.7.3`の間に以下のような変更がありました。
+
+- 認証ファイルの保存先が `~/.notebooklm/storage_state.json` から `~/.notebooklm/profiles/<profile>/storage_state.json` に変更
+- 必須Cookieの定義に`__Secure-1PSIDTS`が追加
+- `auth refresh`という新しいセッション維持コマンドが追加
+
+もしローカル環境とCI環境でバージョンがズレていると、片方でしか通らない挙動の違いに気づかず長期間トラブルシューティングすることになります。**「pinしていないから常に最新が入る」は落とし穴になり得る**、という教訓です。
+
+---
+
+## コラム: 「動いているように見えるバグ」の見つけ方
+
+2026-07-11に発覚したインシデントを教材として紹介します。
+
+**症状**: 記事は収集できているのに、NotebookLMに追加されない。
+
+**最初の仮説**: NotebookLM側の容量制限か、API側のエラーかもしれない。
+
+**実際に確認したこと**:
+1. ログを見ると`RPCError rpc_code=9`（FAILED_PRECONDITION）が出ていた → 「前提条件を満たしていない」ヒント
+2. NotebookLM APIで各ノートブックの`sources_count`を直接確認 → 直近5週分が**ちょうど300件**（上限）で揃っていた。「ちょうど上限」は偶然ではなくシステム側の挙動を疑うサイン
+3. ログをさかのぼると、毎日「新規X件、既読0件」ばかりで**一度も既読判定が出ていなかった**
+4. `download-artifact`のログに`Artifact not found`のエラーが毎回出ていた（エラーが出ていても`continue-on-error: true`で握りつぶされ、失敗に気づきにくくなっていた）
+
+```mermaid
+flowchart TD
+    A["症状: 追加されない"] --> B["ログでエラーコードを確認"]
+    B --> C["APIで実データ(ソース数)を直接確認"]
+    C --> D["過去ログを遡って傾向を確認"]
+    D --> E["握りつぶされていたエラーを発見"]
+    E --> F["根本原因: アーティファクトのcross-run制限"]
+```
+
+**教訓**:
+- **エラーコードは無視しない**。`rpc_code=9`のような一見わかりにくい番号でも、ドキュメントや慣習的な意味（gRPCのステータスコード体系）を調べると手がかりになる
+- **「たまたまキリのいい数字」は疑う**。ちょうど上限値ぴったりというのは、ランダムな失敗ではなくロジックの結果であることが多い
+- **`continue-on-error: true`は諸刃の剣**。ワークフローを止めないための保険として便利だが、本当は毎回失敗しているステップを見えなくしてしまう副作用がある。ログには残るので定期的に確認する習慣が大事
+- **「新規/既読」のような集計値の履歴を追う**。1回のログだけでなく、過去のログを横断的に見ると「ずっと0だった」という異常に気づける
 
 ---
 
@@ -224,28 +250,19 @@ GitHub Actionsが実行するたびに自動でコミットされるため、手
 ### 週次ノートブックでチャット
 
 ```
-Game-Dev-Tech-2026-W20 を開いて…
+Game-Dev-Tech-2026-W28 を開いて…
 
 Q: 今週のUnityの注目アップデートを教えて
 Q: DirectX12に関する記事をまとめて
-Q: Houdiniの新機能は何がある？
 ```
 
 ### Audio Overviewで耳から学ぶ
 
-ノートブックを開いて「Audio Overview」を生成すると、2人のAIが対談するポッドキャスト形式の音声が生成されます。通勤・移動中に技術トレンドをインプットできます。
+ノートブックを開いて「Audio Overview」を生成すると、2人のAIが対談するポッドキャスト形式の音声が生成されます。
 
-### 論文ノートブックで学習コンテンツを生成
+### レポートの確認
 
-`Software-Engineering-2026-W20` を開いて：
-
-- **クイズ生成** → 論文内容の理解度チェック
-- **フラッシュカード** → 重要用語の暗記
-- **Study Guide** → 卒論の参考文献整理
-
-### Weekly-Digestで週次レポートを確認
-
-毎週月曜AM7時に自動生成されます。Actionsの `Artifacts` からMarkdownファイルをダウンロードして確認できます。
+2日に1回自動生成されます。Actionsの`Artifacts`からMarkdownファイルをダウンロードして確認できます。
 
 ---
 
@@ -253,15 +270,11 @@ Q: Houdiniの新機能は何がある？
 
 ### ① 卒論テーマに合わせてカスタマイズ
 
-`collectors/paper_collector.py` の検索クエリを自分の研究テーマに変更します。
-
 ```python
-# 例：Houdini/RAG/MCPの卒論テーマに合わせる
+# collectors/paper_collector.py
 ARXIV_QUERIES = [
     "retrieval augmented generation DCC tools",
     "LLM tutorial generation Houdini",
-    "model context protocol tool automation",
-    "procedural generation learning system",
 ]
 ```
 
@@ -271,23 +284,8 @@ ARXIV_QUERIES = [
 # collectors/zenn_qiita_collector.py に追加
 COMPANY_FEEDS = [
     ("https://tech.なんとか会社.co.jp/feed", "unity", "company_blog"),
-    ("https://engineering.なんとか会社.com/rss", "unity", "company_blog"),
 ]
 ```
-
-### ③ connpassの勉強会情報を追加
-
-```python
-# collectors/ に新しいコレクターを作成
-CONNPASS_FEEDS = [
-    "https://connpass.com/explore/ja/happening/tag/unity/rss/",
-    "https://connpass.com/explore/ja/happening/tag/gamedev/rss/",
-]
-```
-
-### ④ Notionと連携してダッシュボード管理
-
-`notion/client.py` を実装してNotionのDBに収集記事を保存すると、Notionで記事一覧・タグ管理・優先度付けができます。
 
 ---
 
@@ -295,10 +293,10 @@ CONNPASS_FEEDS = [
 
 | ルール | 理由 |
 |---|---|
-| リポジトリは必ず `private` に設定 | Cookieや収集URLが外部に漏れるのを防ぐ |
-| `.gitignore` に `storage_state.json` と `.env` を追加 | Google認証情報の漏洩防止 |
-| `NOTEBOOKLM_AUTH_JSON` はGitHub Secretsのみで管理 | コード内にべた書きしない |
-| Cookieが切れたらWSL2で再ログイン | 数週間〜数ヶ月で失効する |
+| リポジトリは必ず`private`に設定 | Cookieや収集URLが外部に漏れるのを防ぐ |
+| `.gitignore`に`storage_state.json`を追加済み | Google認証情報の漏洩防止 |
+| `NOTEBOOKLM_AUTH_JSON`はGitHub Secretsのみで管理 | コード内にべた書きしない |
+| `GH_PAT_SECRETS_WRITE`は権限を最小限（Secrets書き込みのみ）に絞る | 万一漏洩した際の被害範囲を限定するため |
 
 ---
 
@@ -306,58 +304,56 @@ CONNPASS_FEEDS = [
 
 ### Q: auth FAILEDが出る
 
-```bash
-# 【WSL2】でCookieを再取得
-notebooklm login
-
-# storage_state.json を圧縮してSecretを更新
-cat ~/.notebooklm/storage_state.json | python3 -c \
-  "import sys,json; print(json.dumps(json.load(sys.stdin)))"
+```powershell
+.\refresh_auth.ps1
 ```
 
 ### Q: `All articles already seen.` と表示される
 
 正常動作です。前回と同じ記事しか収集されなかった場合に表示されます。
 
-### Q: NotebookLMへの追加でskipが多い
+### Q: NotebookLMへの追加でerrorが大量に出る
 
-フォーラム系URL（`forums.unrealengine.com`等）はBot弾きで失敗します。  
-`unity_ue_collector.py` から `UNREAL_FEEDS` のフォーラムURLを削除すると改善します。
+対象ノートブックが300件の上限に達している可能性があります。
 
-### Q: GitHub Actionsのcronが止まった
+```powershell
+notebooklm source clean -n <ノートブックID> -y
+```
 
-60日間アクティビティがないと自動停止します。  
-`seen_urls.txt` の自動コミットがアクティビティとして認識されるため通常は止まりません。
+### Q: `auth_keepalive`が頻繁に失敗する
+
+GitHub Actions自体が高頻度cronを遅延させる仕様上の制約によるものです。毎日のタスクスケジューラとIssue通知でカバーされます。
 
 ---
 
 ## コマンドまとめ
 
-```bash
+```powershell
 # ローカル実行
 python main.py --mode check    # 認証確認
 python main.py --mode daily    # デイリー収集
-python main.py --mode weekly   # 週次Digest生成
+python main.py --mode weekly   # レポート生成
 
 # notebooklm CLI
-notebooklm list                     # ノートブック一覧
-notebooklm login                    # 再ログイン
-notebooklm create "ノートブック名"   # ノートブック作成
+notebooklm list                       # ノートブック一覧
+notebooklm login                      # 再ログイン
+notebooklm auth refresh               # セッションローテーション
+notebooklm doctor                     # 総合診断
+notebooklm source clean -n <id> -y    # 重複ソース削除
 
-# seen_urls.txt をリセット（ノートブック作り直し時）
-del seen_urls.txt  # Windows
-rm seen_urls.txt   # WSL2/Linux
-git add seen_urls.txt
-git commit -m "chore: reset seen_urls.txt"
-git push
+# GitHub Actions手動実行
+gh workflow run daily_collect.yml
+gh workflow run auth_check.yml
 ```
 
 ---
 
 ## まとめ
 
-一度セットアップすれば毎日AM6時に自動で動き続けます。NotebookLMを外部脳として活用することで、トークン消費ゼロで大量の資料をAI検索できます。収集ソースとキーワードを変えれば自分のテーマに完全カスタマイズ可能です。コードはすべてGitHubで管理されているので自由に改変して使ってください。
+一度セットアップすれば人手を介さず動き続けます。NotebookLMを外部脳として活用することで、大量の資料をAI検索できます。収集ソースとキーワードを変えれば自分のテーマに完全カスタマイズ可能です。
+
+このハンズオンで紹介した「動いているように見えるバグ」の見つけ方は、このプロジェクトに限らず非同期・自動化システム全般に応用できる考え方です。ログを信じすぎず、実データと突き合わせる習慣を持ちましょう。
 
 ---
 
-*GitHubリポジトリ: `manato1201/research-collector`（private）*
+*GitHubリポジトリ: `manato1201/Research-Collector`（private）*
