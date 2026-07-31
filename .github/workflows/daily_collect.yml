@@ -2,7 +2,8 @@ name: Daily Research Collect
 
 on:
   schedule:
-    - cron: '0 21 * * *'
+    # 6時間おき: JST 0:00 / 6:00 / 12:00 / 18:00 = UTC 15:00(前日) / 21:00(前日) / 3:00 / 9:00
+    - cron: '0 3,9,15,21 * * *'
   workflow_dispatch:
 
 jobs:
