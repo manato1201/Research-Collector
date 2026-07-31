@@ -157,7 +157,7 @@ git push origin main
 ```mermaid
 flowchart LR
     subgraph 収集
-        A["RSS/API収集<br/>(毎日AM6:00)"]
+        A["RSS/API収集<br/>(6時間おき)"]
     end
     subgraph 重複除去
         B["seen_urls.txt と照合<br/>(SHA256ハッシュ)"]

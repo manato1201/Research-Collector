@@ -61,7 +61,7 @@ flowchart TB
     subgraph GHA["GitHub Actions"]
         direction TB
         KA["auth_keepalive.yml<br/>15分おき"]
-        DC["daily_collect.yml<br/>毎日 AM6:00 JST"]
+        DC["daily_collect.yml<br/>6時間おき(0/6/12/18時 JST)"]
         WD["weekly_digest.yml<br/>2日に1回 AM7:00 JST"]
         AC["auth_check.yml<br/>毎週日曜 AM5:00 JST"]
     end
@@ -386,7 +386,7 @@ Actionsタブ → `Daily Research Collect` → `Run workflow` で手動実行し
 ```
 Research-Collector/
 ├── .github/workflows/
-│   ├── daily_collect.yml      # 毎日 AM 6:00 JST
+│   ├── daily_collect.yml      # 6時間おき(0/6/12/18時 JST)
 │   ├── weekly_digest.yml      # 2日に1回 AM 7:00 JST
 │   ├── auth_check.yml         # 毎週日曜 AM 5:00 JST（Cookie残日数事前検知）
 │   └── auth_keepalive.yml     # 15分おき（セッションローテーション）
@@ -428,7 +428,7 @@ Research-Collector/
 |---|---|---|
 | 15分おき | セッションCookieのキープアライブ | GitHub Actions |
 | 毎日 AM 5:30 JST | 認証更新（保険） | Windowsタスクスケジューラ |
-| 毎日 AM 6:00 JST | デイリー収集 → NotebookLMへ追加 | GitHub Actions |
+| 6時間おき(0/6/12/18時 JST) | デイリー収集 → NotebookLMへ追加 | GitHub Actions |
 | 2日に1回 AM 7:00 JST | レポート生成（Deep Research） | GitHub Actions |
 | 毎週日曜 AM 5:00 JST | Cookie残日数の事前検知 | GitHub Actions |
 
