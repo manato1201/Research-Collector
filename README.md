@@ -36,7 +36,7 @@
 |---|---|---|
 | 15分おき | セッションCookie(`__Secure-1PSIDTS`)のキープアライブ | GitHub Actions |
 | 毎日 AM 5:30 | NotebookLM認証更新（保険） | Windowsタスクスケジューラ |
-| 毎日 AM 6:00 | 記事収集 → NotebookLM追加 | GitHub Actions |
+| 6時間おき(0/6/12/18時) | 記事収集 → NotebookLM追加 | GitHub Actions |
 | 2日に1回 AM 7:00 | レポート生成（日本語） | GitHub Actions |
 | 毎週日曜 AM 5:00 | 認証切れ事前検知・チェック → Issue通知 | GitHub Actions |
 
@@ -233,7 +233,7 @@ COMPANY_FEEDS = [
 ```
 research-collector/
 ├── .github/workflows/
-│   ├── daily_collect.yml      # 毎日 AM 6:00 JST
+│   ├── daily_collect.yml      # 6時間おき(0/6/12/18時 JST)
 │   ├── weekly_digest.yml      # 2日に1回 AM 7:00 JST
 │   ├── auth_check.yml         # 毎週日曜 AM 5:00 JST
 │   └── auth_keepalive.yml     # 15分おき
