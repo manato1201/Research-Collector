@@ -13,10 +13,13 @@ Write-Host "  タスクスケジューラ登録スクリプト"     -ForegroundC
 Write-Host "======================================"  -ForegroundColor Cyan
 Write-Host ""
 
-# トリガー: 毎日 AM 5:30
-$trigger = New-ScheduledTaskTrigger `
-    -Daily `
-    -At "05:30"
+# トリガー: 6時間おき(0:00 / 6:00 / 12:00 / 18:00) — daily_collect.ymlのスケジュールに合わせる
+$trigger = @(
+    New-ScheduledTaskTrigger -Daily -At "00:00"
+    New-ScheduledTaskTrigger -Daily -At "06:00"
+    New-ScheduledTaskTrigger -Daily -At "12:00"
+    New-ScheduledTaskTrigger -Daily -At "18:00"
+)
 
 # アクション: run_auth_refresh.bat を実行
 $action = New-ScheduledTaskAction `
@@ -43,7 +46,7 @@ Register-ScheduledTask `
 Write-Host ""
 Write-Host "  ✅ タスクを登録しました" -ForegroundColor Green
 Write-Host "  タスク名: $TaskName"     -ForegroundColor White
-Write-Host "  実行時刻: 毎日 AM 5:30"  -ForegroundColor White
+Write-Host "  実行時刻: 6時間おき(0:00 / 6:00 / 12:00 / 18:00)"  -ForegroundColor White
 Write-Host ""
 Write-Host "  タスクスケジューラで確認:" -ForegroundColor Yellow
 Write-Host "  スタートメニュー > タスクスケジューラ > タスクスケジューラライブラリ" -ForegroundColor White
