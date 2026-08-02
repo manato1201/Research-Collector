@@ -35,7 +35,7 @@
 | タイミング | 実行内容 | 実行環境 |
 |---|---|---|
 | 15分おき | セッションCookie(`__Secure-1PSIDTS`)のキープアライブ | GitHub Actions |
-| 毎日 AM 5:30 | NotebookLM認証更新（保険） | Windowsタスクスケジューラ |
+| 6時間おき(0/6/12/18時) | NotebookLM認証更新（保険） | Windowsタスクスケジューラ |
 | 6時間おき(0/6/12/18時) | 記事収集 → NotebookLM追加 | GitHub Actions |
 | 2日に1回 AM 7:00 | レポート生成（日本語） | GitHub Actions |
 | 毎週日曜 AM 5:00 | 認証切れ事前検知・チェック → Issue通知 | GitHub Actions |
@@ -125,11 +125,8 @@ https://github.com/あなたのユーザー名/リポジトリ名/labels
 ### Step 7: タスクスケジューラに登録（認証自動更新）
 
 ```powershell
-# リポジトリのフォルダで実行
-$action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"C:\Users\あなたのユーザー名\path\to\run_auth_refresh.bat`""
-$trigger = New-ScheduledTaskTrigger -Daily -At "05:30"
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-Register-ScheduledTask -TaskName "NotebookLM AuthRefresh" -Trigger $trigger -Action $action -Settings $settings -Force
+# リポジトリのフォルダで実行(6時間おき: 0/6/12/18時のトリガーを register_task.ps1 が登録)
+.\register_task.ps1
 ```
 
 ### Step 8: 動作確認
@@ -155,16 +152,16 @@ NotebookLMの認証Cookieには失効パターンが2種類あります。
   → これにより「アカウント全体としては数百日単位で有効なSID」を
     実際に使い続けられる状態を維持する
 
-毎日 AM 5:30（Windowsタスクスケジューラ・保険）
+6時間おき（Windowsタスクスケジューラ・保険）
   → run_auth_refresh.bat が起動
   → PowerShellウィンドウが開く
   → notebooklm login（ブラウザが開く）
   → Googleにログイン → ENTER（約1分）
   → GitHub Secretsを自動更新
-  → 曜日に応じたワークフローを自動再実行
+  → daily_collectを自動再実行
   → ウィンドウが閉じる
 
-AM 6:00（GitHub Actions）
+6時間おき（GitHub Actions）
   → 更新済みのCookieで認証OK
   → 記事収集 → NotebookLMに追加
 ```
