@@ -1,6 +1,6 @@
-# =============================================================
+﻿# =============================================================
 # NotebookLM 認証更新タスクをタスクスケジューラに登録する
-# 使い方: .\register_task.ps1
+# 使い方: PowerShellを「管理者として実行」で開いてから .\register_task.ps1
 # =============================================================
 
 $TaskName = "NotebookLM AuthRefresh"
@@ -12,6 +12,15 @@ Write-Host "======================================"  -ForegroundColor Cyan
 Write-Host "  タスクスケジューラ登録スクリプト"     -ForegroundColor Cyan
 Write-Host "======================================"  -ForegroundColor Cyan
 Write-Host ""
+
+# 管理者権限チェック（Register-ScheduledTaskはアクセス拒否になりやすいため事前に検出する）
+$currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = New-Object Security.Principal.WindowsPrincipal($currentIdentity)
+if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host "  ❌ 管理者権限が必要です" -ForegroundColor Red
+    Write-Host "  PowerShellを「管理者として実行」で開き直してから、再度実行してください。" -ForegroundColor Yellow
+    exit 1
+}
 
 # トリガー: 6時間おき(0:00 / 6:00 / 12:00 / 18:00) — daily_collect.ymlのスケジュールに合わせる
 $trigger = @(
@@ -34,14 +43,22 @@ $settings = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
     -MultipleInstances IgnoreNew
 
-# 登録（既存があれば上書き）
-Register-ScheduledTask `
-    -TaskName $TaskName `
-    -Trigger $trigger `
-    -Action $action `
-    -Settings $settings `
-    -RunLevel Limited `
-    -Force
+# 登録（既存があれば上書き）。失敗時は必ず気づけるようtry/catchで判定する。
+try {
+    Register-ScheduledTask `
+        -TaskName $TaskName `
+        -Trigger $trigger `
+        -Action $action `
+        -Settings $settings `
+        -RunLevel Limited `
+        -Force `
+        -ErrorAction Stop | Out-Null
+} catch {
+    Write-Host ""
+    Write-Host "  ❌ タスクの登録に失敗しました" -ForegroundColor Red
+    Write-Host "  $($_.Exception.Message)" -ForegroundColor Red
+    exit 1
+}
 
 Write-Host ""
 Write-Host "  ✅ タスクを登録しました" -ForegroundColor Green
@@ -55,6 +72,10 @@ Write-Host ""
 # 手動実行して動作確認
 $confirm = Read-Host "今すぐテスト実行しますか？ (y/n)"
 if ($confirm -eq "y") {
-    Start-ScheduledTask -TaskName $TaskName
-    Write-Host "  ✅ タスクを実行しました" -ForegroundColor Green
+    try {
+        Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop
+        Write-Host "  ✅ タスクを実行しました" -ForegroundColor Green
+    } catch {
+        Write-Host "  ❌ タスクの実行に失敗しました: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
