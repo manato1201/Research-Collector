@@ -1,8 +1,8 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-08-10T16:04:20Z",
-    "collected": 109,
+    "run_at": "2026-08-10T21:04:12Z",
+    "collected": 114,
     "new": 2,
     "notebooklm_ok": 4,
     "notebooklm_skip": 0,
