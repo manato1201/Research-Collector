@@ -58,3 +58,22 @@ CATEGORY_TO_NOTEBOOK_NAME = {
     "graphics_research":    "Graphics-Research-{YYYY}-{WNN}",
     "software_engineering": "Software-Engineering-{YYYY}-{WNN}",
 }
+
+# ============================================================
+# ローカル限定拡張のマージ（IMPROVEMENT_PLAN.md Phase 7）
+# ============================================================
+# nbklm/notebook_ids_local.py は .gitignore 対象のため配布物には含まれない。
+# 存在する環境（ローカル限定の新分野コレクターを使う場合）でのみ
+# SOURCE_TYPE_TO_CATEGORIES / CATEGORY_TO_NOTEBOOK_NAME に追加カテゴリを
+# マージする。main.py の _save_to_notion() と同型の
+# 「存在しなければ黙ってスキップ」パターン。
+# 本体の3カテゴリ（daily_collect.yml等が使う既存運用）には一切影響しない。
+try:
+    from .notebook_ids_local import (
+        SOURCE_TYPE_TO_CATEGORIES_LOCAL,
+        CATEGORY_TO_NOTEBOOK_NAME_LOCAL,
+    )
+    SOURCE_TYPE_TO_CATEGORIES.update(SOURCE_TYPE_TO_CATEGORIES_LOCAL)
+    CATEGORY_TO_NOTEBOOK_NAME.update(CATEGORY_TO_NOTEBOOK_NAME_LOCAL)
+except ImportError:
+    pass  # ローカル拡張ファイルが無い環境（=配布先）では黙ってスキップ
