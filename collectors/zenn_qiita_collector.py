@@ -97,3 +97,63 @@ def collect(max_per_feed: int = 20) -> list[dict]:
 
     logger.info(f"[zenn_qiita] total {len(articles)} articles collected")
     return articles
+
+
+def collect_backfill(
+    since: datetime,
+    until: datetime,
+    max_per_feed: int = 50,
+) -> list[dict]:
+    """
+    RSSフィードが現在保持している範囲内で、since〜untilに公開日が収まる記事だけを返す。
+
+    【制約】RSSフィードは直近数十件しか保持しないため、真の意味での過去バックフィルは
+    できない。「フィードが現存する最古分」までが実質的な上限であり、過去に一度
+    フィードから外れた記事は原理上取得不能。max_per_feedを大きくしても
+    フィードの保持件数以上は取得できない点に注意。
+    """
+    articles = []
+    seen_hashes = set()
+
+    for feed_url, source_type, platform in ALL_FEEDS:
+        try:
+            feed = fetch_feed(feed_url)
+            entries = feed.entries[:max_per_feed]
+            logger.info(
+                f"[{platform} backfill] {feed_url}: {len(entries)} entries "
+                f"(フィード保持範囲内のみ)"
+            )
+
+            for entry in entries:
+                url = entry.get("link", "")
+                if not url:
+                    continue
+
+                published_at = _parse_date(entry)
+                if published_at is None:
+                    continue
+                if published_at < since or published_at > until:
+                    continue
+
+                h = _url_hash(url)
+                if h in seen_hashes:
+                    continue
+                seen_hashes.add(h)
+
+                articles.append({
+                    "url":          url,
+                    "title":        entry.get("title", ""),
+                    "source_type":  source_type,
+                    "platform":     platform,
+                    "published_at": published_at,
+                    "url_hash":     h,
+                })
+
+        except Exception as e:
+            logger.warning(f"[{platform} backfill] fetch failed {feed_url}: {e}")
+
+    logger.info(
+        f"[zenn_qiita backfill] total {len(articles)} articles "
+        f"({since.date()} 〜 {until.date()}, フィード保持範囲内)"
+    )
+    return articles

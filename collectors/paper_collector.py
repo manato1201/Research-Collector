@@ -190,6 +190,89 @@ def collect_arxiv(max_per_query: int = 5) -> list[dict]:
     return articles
 
 
+def collect_arxiv_backfill(
+    since: datetime,
+    until: datetime,
+    max_per_query: int = 50,
+) -> list[dict]:
+    """
+    since〜untilの期間でarXiv検索APIから収集する（真のバックフィル）。
+
+    arXiv APIの `submittedDate:[YYYYMMDDHHMM TO YYYYMMDDHHMM]` フィールドで
+    サーバー側に日付範囲を指定する。検証の結果、この日付フィルタは検索語を
+    `all:"..."` とダブルクォートで囲んだ場合のみ効くが、クォートすると
+    フレーズの厳密一致（語順・隣接まで一致必須）になり、collect_arxiv()の
+    単語羅列クエリ（例: "plant biology genomics"）ではヒット数がほぼゼロに
+    なることを実機確認した。そのため単語ごとに `all:word AND all:word ...`
+    と分解してAND連結し、フレーズ厳密一致を避けつつ日付フィルタだけ効かせる。
+    max_per_query はクエリ1件あたりの取得上限（全ページ合計）。
+    """
+    articles = []
+    seen_hashes = set()
+    page_size = 50
+    since_str = since.strftime("%Y%m%d%H%M")
+    until_str = until.strftime("%Y%m%d%H%M")
+
+    for query in ARXIV_QUERIES:
+        term_query = " AND ".join(f"all:{term}" for term in query.split())
+        search_query = (
+            f"({term_query} AND submittedDate:[{since_str} TO {until_str}])"
+        )
+        start = 0
+        fetched_for_query = 0
+
+        while fetched_for_query < max_per_query:
+            remaining = max_per_query - fetched_for_query
+            page_limit = min(page_size, remaining)
+            params = urllib.parse.urlencode({
+                "search_query": search_query,
+                "start":        start,
+                "max_results":  page_limit,
+                "sortBy":       "submittedDate",
+                "sortOrder":    "descending",
+            })
+            url = f"{ARXIV_API}?{params}"
+
+            try:
+                xml_text = _fetch_xml(url)
+            except Exception as e:
+                logger.warning(f"[arXiv backfill] fetch failed: {url[:80]} → {e}")
+                break
+
+            papers = _parse_arxiv_xml(xml_text)
+            if not papers:
+                break
+
+            for paper in papers:
+                h = _url_hash(paper["url"])
+                if h in seen_hashes:
+                    continue
+                seen_hashes.add(h)
+
+                articles.append({
+                    "url":          paper["url"],
+                    "title":        paper["title"],
+                    "source_type":  "arxiv",
+                    "platform":     "arxiv",
+                    "published_at": paper["published_at"],
+                    "url_hash":     h,
+                    "authors":      paper.get("authors", ""),
+                })
+
+            fetched_for_query += len(papers)
+            start += len(papers)
+            time.sleep(3)
+
+            if len(papers) < page_limit:
+                break
+
+    logger.info(
+        f"[arXiv backfill] total {len(articles)} papers "
+        f"({since.date()} 〜 {until.date()})"
+    )
+    return articles
+
+
 # ------------------------------------------------------------------ #
 #  Semantic Scholar コレクター
 # ------------------------------------------------------------------ #
@@ -275,6 +358,102 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
     return articles
 
 
+def collect_semantic_scholar_backfill(
+    since: datetime,
+    until: datetime,
+    max_per_query: int = 50,
+) -> list[dict]:
+    """
+    since〜untilの期間でSemantic Scholar APIを検索する（真のバックフィル）。
+    `publicationDateOrYear` フィルタ（YYYY-MM-DD:YYYY-MM-DD形式）で日付範囲を
+    サーバー側に指定できるため、arXivと違いページング打ち切りロジックは不要。
+    """
+    articles = []
+    seen_hashes = set()
+    date_range = f"{since.strftime('%Y-%m-%d')}:{until.strftime('%Y-%m-%d')}"
+
+    for query in SEMANTIC_SCHOLAR_QUERIES:
+        params = urllib.parse.urlencode({
+            "query":                 query,
+            "limit":                 max_per_query,
+            "fields":                "title,authors,year,externalIds,openAccessPdf,url,publicationDate",
+            "publicationDateOrYear": date_range,
+        })
+        url = f"{SEMANTIC_SCHOLAR_API}?{params}"
+
+        try:
+            data = _fetch_json(url)
+        except Exception as e:
+            logger.warning(f"[S2 backfill] fetch failed after retries: {url[:80]} → {e}")
+            continue
+
+        papers = data.get("data", []) or []
+        logger.info(f"[S2 backfill] '{query[:40]}': {len(papers)} papers")
+
+        for paper in papers:
+            paper_url = None
+            ext_ids = paper.get("externalIds", {}) or {}
+
+            if ext_ids.get("DOI"):
+                paper_url = f"https://doi.org/{ext_ids['DOI']}"
+            elif paper.get("openAccessPdf"):
+                paper_url = paper["openAccessPdf"].get("url")
+            elif paper.get("paperId"):
+                paper_url = (
+                    f"https://www.semanticscholar.org/paper/{paper['paperId']}"
+                )
+
+            if not paper_url:
+                continue
+
+            h = _url_hash(paper_url)
+            if h in seen_hashes:
+                continue
+            seen_hashes.add(h)
+
+            authors_list = paper.get("authors", []) or []
+            author_str = ", ".join(
+                a.get("name", "") for a in authors_list[:3]
+            )
+            if len(authors_list) > 3:
+                author_str += " et al."
+
+            published_at = None
+            pub_date_str = paper.get("publicationDate")
+            if pub_date_str:
+                try:
+                    published_at = datetime.strptime(
+                        pub_date_str, "%Y-%m-%d"
+                    ).replace(tzinfo=timezone.utc)
+                except Exception:
+                    pass
+            if published_at is None:
+                year = paper.get("year")
+                if year:
+                    try:
+                        published_at = datetime(int(year), 1, 1, tzinfo=timezone.utc)
+                    except Exception:
+                        pass
+
+            articles.append({
+                "url":          paper_url,
+                "title":        paper.get("title", ""),
+                "source_type":  "paper",
+                "platform":     "semantic_scholar",
+                "published_at": published_at,
+                "url_hash":     h,
+                "authors":      author_str,
+            })
+
+        time.sleep(1)
+
+    logger.info(
+        f"[S2 backfill] total {len(articles)} papers "
+        f"({since.date()} 〜 {until.date()})"
+    )
+    return articles
+
+
 # ------------------------------------------------------------------ #
 #  まとめて収集
 # ------------------------------------------------------------------ #
@@ -299,4 +478,36 @@ def collect(
             unique.append(a)
 
     logger.info(f"[paper] total {len(unique)} unique papers collected")
+    return unique
+
+
+def collect_backfill(
+    since: datetime,
+    until: datetime,
+    max_arxiv: int = 50,
+    max_semantic: int = 50,
+) -> list[dict]:
+    """
+    バックフィル版のまとめ関数。collect()とは完全に独立させる。
+    既存 collect(max_arxiv, max_semantic) の呼び出し元・シグネチャは無変更。
+    """
+    articles = []
+
+    articles.extend(collect_arxiv_backfill(since, until, max_per_query=max_arxiv))
+    articles.extend(
+        collect_semantic_scholar_backfill(since, until, max_per_query=max_semantic)
+    )
+
+    seen = set()
+    unique = []
+    for a in articles:
+        h = a["url_hash"]
+        if h not in seen:
+            seen.add(h)
+            unique.append(a)
+
+    logger.info(
+        f"[paper backfill] total {len(unique)} unique papers "
+        f"({since.date()} 〜 {until.date()})"
+    )
     return unique
