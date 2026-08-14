@@ -178,6 +178,57 @@ def collect_cedec_youtube(max_items: int = 20) -> list[dict]:
     return articles
 
 
+def collect_cedec_youtube_backfill(
+    since: datetime,
+    until: datetime,
+    max_items: int = 50,
+) -> list[dict]:
+    """
+    CEDEC YouTube RSSが現在保持している範囲内で、since〜untilの動画だけを返す。
+
+    【制約】RSSフィードは直近分しか保持しないため、フィードが現存する最古分までが上限。
+    """
+    articles = []
+    seen_hashes = set()
+
+    try:
+        feed = fetch_feed(CEDEC_YOUTUBE_RSS)
+        entries = feed.entries[:max_items]
+        logger.info(
+            f"[CEDEC YouTube backfill] {len(entries)} videos found (フィード保持範囲内のみ)"
+        )
+
+        for entry in entries:
+            url = entry.get("link", "")
+            if not url:
+                continue
+
+            published_at = _parse_date(entry)
+            if published_at is None:
+                continue
+            if published_at < since or published_at > until:
+                continue
+
+            h = _url_hash(url)
+            if h in seen_hashes:
+                continue
+            seen_hashes.add(h)
+
+            articles.append({
+                "url":          url,
+                "title":        entry.get("title", ""),
+                "source_type":  "cedec",
+                "platform":     "cedec_youtube",
+                "published_at": published_at,
+                "url_hash":     h,
+            })
+
+    except Exception as e:
+        logger.warning(f"[CEDEC YouTube backfill] fetch failed: {e}")
+
+    return articles
+
+
 # ------------------------------------------------------------------ #
 #  まとめて収集
 # ------------------------------------------------------------------ #
@@ -190,4 +241,30 @@ def collect(max_cedil: int = 30, max_youtube: int = 20) -> list[dict]:
     articles.extend(collect_cedec_youtube(max_youtube))
 
     logger.info(f"[CEDEC] total {len(articles)} items collected")
+    return articles
+
+
+def collect_backfill(
+    since: datetime,
+    until: datetime,
+    max_youtube: int = 50,
+) -> list[dict]:
+    """
+    バックフィル版のまとめ関数。collect()とは完全に独立させる。
+
+    【制約】CEDiL(collect_cedil)は published_at を保持しておらず、かつ
+    _CEDiLParser はトップページ専用実装で過去年度セッション一覧ページに
+    対応していないため、現時点ではバックフィル対象外
+    （IMPROVEMENT_PLAN.md Phase 5「要追加調査」参照）。
+    CEDEC YouTube RSSのみ日付範囲でバックフィルする。
+    """
+    logger.info(
+        "[CEDEC backfill] CEDiLは日付情報なし/過去ページ未対応のため対象外"
+        "（YouTubeのみ実施）"
+    )
+    articles = collect_cedec_youtube_backfill(since, until, max_items=max_youtube)
+    logger.info(
+        f"[CEDEC backfill] total {len(articles)} items "
+        f"({since.date()} 〜 {until.date()})"
+    )
     return articles

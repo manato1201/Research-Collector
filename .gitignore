@@ -46,3 +46,14 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# ============================================================
+# ローカル限定: 新分野コレクター(配布物に含めない)
+# IMPROVEMENT_PLAN.md Phase 7 参照
+# ============================================================
+collectors/botany_collector.py
+collectors/pharmacology_collector.py
+collectors/mineralogy_collector.py
+nbklm/notebook_ids_local.py
+local_collect_extra.py
+output/local_extra/
