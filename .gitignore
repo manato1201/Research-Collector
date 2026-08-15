@@ -57,3 +57,4 @@ collectors/mineralogy_collector.py
 nbklm/notebook_ids_local.py
 local_collect_extra.py
 output/local_extra/
+LOCAL_EXTRA_GUIDE.md

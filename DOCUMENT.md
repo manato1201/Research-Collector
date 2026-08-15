@@ -1,6 +1,6 @@
 # research-collector ドキュメント
 
-> 作成日: 2026-05-09 / 最終更新: 2026-07-11
+> 作成日: 2026-05-09 / 最終更新: 2026-08-14
 > 対象リポジトリ: `manato1201/Research-Collector`
 > 作成者: 松浦真聖 (TK230178)
 
@@ -18,7 +18,8 @@
 8. [運用マニュアル](#8-運用マニュアル)
 9. [インシデント事例: 重複除去が機能しなかった問題](#9-インシデント事例-重複除去が機能しなかった問題)
 10. [トラブルシューティング](#10-トラブルシューティング)
-11. [付録](#11-付録)
+11. [バックフィル機構とローカル限定拡張](#11-バックフィル機構とローカル限定拡張)
+12. [付録](#12-付録)
 
 ---
 
@@ -392,29 +393,36 @@ Research-Collector/
 │   └── auth_keepalive.yml     # 15分おき（セッションローテーション）
 ├── collectors/
 │   ├── retry.py                # 指数バックオフ付きリトライの共通デコレータ
-│   ├── zenn_qiita_collector.py
-│   ├── unity_ue_collector.py
-│   ├── cedec_collector.py
-│   └── paper_collector.py
+│   ├── _academic_api.py        # arXiv/Semantic Scholar共通ヘルパー(ドメイン非依存)
+│   ├── zenn_qiita_collector.py # collect() + collect_backfill()
+│   ├── unity_ue_collector.py   # collect() + collect_backfill()
+│   ├── cedec_collector.py      # collect() + collect_backfill()
+│   ├── paper_collector.py      # collect() + collect_backfill()
+│   └── (※ .gitignore対象のローカル限定コレクターが存在する場合あり、11章参照)
 ├── nbklm/
 │   ├── __init__.py
 │   ├── client.py                # notebooklm-py ラッパー
 │   ├── notebook_ids.py          # ノートブックID・振り分けルール定義
 │   ├── notebook_cleanup.py      # 容量上限に近づいたら古いノートブックを自動削除
 │   ├── auth_monitor.py          # Cookie残日数の事前検知
+│   ├── notebook_ids_local.py    # (.gitignore対象) ローカル拡張カテゴリ定義、存在すれば自動マージ
 │   └── seen_urls.py             # 収集済みURL重複チェック管理（Git管理）
 ├── scripts/
 │   └── update_readme_health.py  # health.json → README運用ステータス表を更新
-├── main.py                      # メインエントリーポイント
+├── main.py                      # メインエントリーポイント(Phase 5〜7で無変更)
+├── local_collect_extra.py       # (.gitignore対象) ローカル限定の追加収集エントリポイント
 ├── health.py                    # 実行結果を health.json に記録
 ├── requirements.txt
-├── seen_urls.txt                 # 収集済みURLハッシュ（Gitで永続化）
+├── seen_urls.txt                 # 収集済みURLハッシュ（Gitで永続化。ローカル収集分も同じファイルを共有）
 ├── health.json                   # 直近の実行結果（Gitで永続化）
 ├── refresh_auth.ps1              # 認証更新スクリプト（PowerShell）
 ├── run_auth_refresh.bat          # タスクスケジューラ起動用バッチ
-├── register_task.ps1             # タスクスケジューラ登録スクリプト
+├── register_task.ps1             # タスクスケジューラ登録スクリプト（NotebookLM認証更新用）
+├── register_local_extra_task.ps1 # タスクスケジューラ登録スクリプト（ローカル限定収集用）
+├── run_local_extra_collect.bat   # タスクスケジューラ起動用バッチ（ローカル限定収集用）
 ├── IMPROVEMENT_PLAN.md           # 完全自動化に向けた改善計画・実施記録
 ├── DOCUMENT.md                   # このドキュメント
+├── LOCAL_EXTRA_GUIDE.md          # (.gitignore対象) ローカル限定拡張の詳細ガイド
 └── HANDSON.md                    # ハンズオン資料
 ```
 
@@ -543,7 +551,91 @@ GitHubはリポジトリに60日間アクティビティがないとcronを停�
 
 ---
 
-## 11. 付録
+## 11. バックフィル機構とローカル限定拡張
+
+> 2026-08-14追記。IMPROVEMENT_PLAN.md の「追加テーマ: ローカル限定データ拡張」(Phase 5〜7)実装分。既存の日次/週次運用(1〜10章)には影響を与えない独立追加。
+
+### 11.1 概要
+
+もともと `main.py` の収集フローは「直近N件を取得して終わり」で、過去記事を狙って取りに行く経路が無かった。これを解消するため、**既存collectorの`collect()`とは完全に独立した`collect_backfill(since, until)`** を各collectorに追加した。
+
+```mermaid
+flowchart LR
+    subgraph Existing["既存(無変更)"]
+        M["main.py run_daily()"] --> C1["collect(max_per_feed)"]
+    end
+    subgraph New["新規追加"]
+        C2["collect_backfill(since, until)"]
+    end
+    C1 -. "同じモジュール内、\n別関数として共存" .-> C2
+```
+
+`collect()`のシグネチャ・呼び出し元(`main.py`)は一切変更していない。`collect_backfill()`は別スクリプトから呼ばれる想定の追加関数で、重複防止は既存の`nbklm/seen_urls.py`(`filter_new_articles`/`save_seen`)をそのまま再利用する。
+
+### 11.2 ソース別のバックフィル可否
+
+| ソース種別 | 対象collector | 可否 | 理由 |
+|---|---|---|---|
+| arXiv / Semantic Scholar | `paper_collector.py` | ○ 真のバックフィル可能 | 両APIとも日付範囲クエリに対応 |
+| Zenn/Qiita/Unity/UE RSS | `zenn_qiita_collector.py` 等 | △ フィード保持範囲内のみ | RSSは直近数十件しか保持しないため、過去に一度フィードから外れた記事は原理上取得不能 |
+| CEDiL(スクレイピング) | `cedec_collector.py` | × 現状対象外 | `published_at`を保持しておらず、かつトップページ専用実装で過去年度一覧ページに未対応 |
+| CEDEC YouTube RSS | `cedec_collector.py` | △ フィード保持範囲内のみ | RSSと同様の制約 |
+
+### 11.3 実装時に判明した重要な訂正: arXivの日付フィルタの罠
+
+当初の設計では「新しい順にページングし、`since`より古い記事が出たら打ち切る」方式を想定していたが、実装後に実機検証したところ人気クエリ(例: `machine learning`)では期間到達前に取得上限を使い切ってしまい**0件**になることが判明した。
+
+調査の結果、arXiv APIには`submittedDate:[YYYYMMDDHHMM TO YYYYMMDDHHMM]`というサーバー側の日付範囲フィルタが存在するが、これには罠があった。
+
+```mermaid
+flowchart TD
+    A["all:machine learning\nAND submittedDate:[...]\n(クォート無し)"] --> A2["❌ 日付フィルタが無視され\n全期間から返ってくる"]
+    B["all:\"machine learning\"\nAND submittedDate:[...]\n(フレーズをクォート)"] --> B2["△ 日付フィルタは効くが\nフレーズ完全一致になり\n複数単語クエリはほぼ0件"]
+    C["all:machine AND all:learning\nAND submittedDate:[...]\n(単語ごとにAND連結)"] --> C2["✅ 日付フィルタが効き\nかつヒット件数も確保できる"]
+```
+
+最終的に③の「単語ごとに`all:word AND all:word ...`と分解してAND連結する」方式を採用し、`collectors/paper_collector.py`の`collect_arxiv_backfill()`・共通ヘルパー`collectors/_academic_api.py`の`arxiv_search_backfill()`の両方に反映した。Semantic Scholar側は`publicationDateOrYear`(`YYYY-MM-DD:YYYY-MM-DD`)パラメータで日付範囲を指定する(公式ドキュメント準拠。実機検証中にAPIレート制限に阻まれたため実応答での確認は次回持ち越し)。
+
+### 11.4 ローカル限定拡張の仕組み(汎用パターン)
+
+ユーザーの興味に応じて、配布用リポジトリを汚さずに収集分野を追加できる拡張ポイントを用意した。ポイントは「**追加した分野の存在そのものをGit履歴に残さない**」ことで、具体的な追加内容(どんな分野を足したか)は各自のローカル環境にのみ存在する。
+
+```mermaid
+flowchart TB
+    subgraph Tracked["Git管理下(配布物に含まれる)"]
+        direction TB
+        NBK["nbklm/notebook_ids.py<br/>本体3カテゴリ(無変更)"]
+        Merge["try: from .notebook_ids_local import ...<br/>except ImportError: pass<br/>(存在すればマージ、無ければ無視)"]
+        Academic["collectors/_academic_api.py<br/>arXiv/Semantic Scholar共通ヘルパー<br/>(ドメイン非依存なので追跡対象)"]
+        NBK --> Merge
+    end
+
+    subgraph Local[".gitignore対象(ローカルのみ)"]
+        direction TB
+        LocalIds["nbklm/notebook_ids_local.py<br/>追加カテゴリの定義"]
+        LocalCollectors["collectors/*_collector.py<br/>追加分野のコレクター"]
+        Entry["local_collect_extra.py<br/>ローカル専用エントリポイント"]
+        LocalCollectors --> Entry
+        Entry -. uses .-> Academic
+    end
+
+    Merge -. "存在すれば読み込む" .-> LocalIds
+    Entry -->|add_articles / seen_urls 経由| NBK
+
+    Task["Windows タスクスケジューラ<br/>register_local_extra_task.ps1"] --> Entry
+```
+
+- `main.py` / `nbklm/client.py` / `.github/workflows/*.yml` は**一切変更しない**。既存の日次収集・週次Digestはこの拡張の存在を認識しない。
+- マージ処理は `main.py` L167-176 の `_save_to_notion()`(`notion.client`が無ければ黙ってスキップする)と同型の「存在しなければ無視」パターンを転用している。
+- ローカル拡張ファイルが存在しない環境(＝配布先のクローン直後)でも、`nbklm/notebook_ids.py`のimportは例外なく成功し、元の3カテゴリのみで動作することを実機確認済み。
+
+### 11.5 具体的に何を追加したかは非公開
+
+このリポジトリのメンテナー自身がローカルで追加した具体的な収集分野・設定内容は、上記の仕組みに従って `.gitignore` 対象のため本ドキュメントおよびGit履歴には記載しない。ローカル環境には別途 `LOCAL_EXTRA_GUIDE.md`(同じく`.gitignore`対象)を用意しており、そちらに詳細・テスト手順を記載している。
+
+---
+
+## 12. 付録
 
 ### GitHub Secrets 一覧
 
@@ -590,3 +682,4 @@ gh workflow run auth_keepalive.yml
 | 2026-07-03 | Cookie残日数の事前検知（Phase 1）を追加 |
 | 2026-07-04 | notebooklm-py 0.7.3へアップグレード、auth_keepalive.yml追加（Phase 2）、リトライ・失敗通知・ヘルスダッシュボード追加（Phase 4） |
 | 2026-07-11 | ノートブック自動削除・レポート頻度変更（2日に1回）を追加。seen_urls.txt永続化バグを修正し、満杯だったノートブックをクリーンアップ。auth_keepalive失敗時のIssue通知を追加 |
+| 2026-08-14 | 既存collectorに`collect_backfill(since, until)`を追加(11章)。arXiv APIの日付範囲フィルタとクエリのクォート有無による挙動差を実機確認し対処。`nbklm/notebook_ids.py`にローカル拡張の自動マージ機構(try/except ImportError)を追加、本体3カテゴリ・既存の週次Digestは無変更。ローカル限定の拡張ポイント(`.gitignore`パターン)を整備 |
