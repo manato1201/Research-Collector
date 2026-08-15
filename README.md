@@ -225,6 +225,68 @@ COMPANY_FEEDS = [
 
 ---
 
+## 過去記事のバックフィル収集（手動）
+
+通常の`collect()`とは別に、各collectorに`collect_backfill(since, until)`を用意している。
+日次運用（`main.py`）には組み込まれていない、手動実行専用の追加機能。
+
+```powershell
+python -c "
+from datetime import datetime, timezone
+from collectors.paper_collector import collect_backfill
+from nbklm.seen_urls import filter_new_articles, save_seen
+from nbklm import add_articles
+
+since = datetime(2024, 1, 1, tzinfo=timezone.utc)
+until = datetime(2024, 12, 31, tzinfo=timezone.utc)
+articles = collect_backfill(since, until, max_arxiv=30, max_semantic=30)
+new_articles, updated_seen = filter_new_articles(articles)
+result = add_articles(new_articles)
+save_seen(updated_seen)
+print(result)
+"
+```
+
+| ソース | バックフィル可否 |
+|---|---|
+| arXiv / Semantic Scholar（`paper_collector.py`） | 指定した`since`〜`until`の範囲で収集可能 |
+| Zenn/Qiita/Unity/UE（RSS系） | フィードが現存する最古分まで（過去に一度外れた記事は取得不能） |
+| CEDEC YouTube | 同上（RSS） |
+| CEDiL | 現状非対応（日付情報を保持しないため） |
+
+詳細は [DOCUMENT.md 11章](DOCUMENT.md#11-バックフィル機構とローカル限定拡張) を参照。
+
+---
+
+## ローカル限定の拡張ポイント
+
+`nbklm/notebook_ids.py`は末尾で`nbklm/notebook_ids_local.py`(存在すれば)を自動マージする仕組みを持っている。
+自分の興味に合わせて収集分野を追加したいが、その内容をリポジトリの配布物（Git履歴）には残したくない場合に使う。
+
+```python
+# nbklm/notebook_ids_local.py（.gitignore対象、各自で作成する）
+SOURCE_TYPE_TO_CATEGORIES_LOCAL = {
+    "my_topic": ["my_topic"],
+}
+CATEGORY_TO_NOTEBOOK_NAME_LOCAL = {
+    "my_topic": "MyTopic-{YYYY}-{WNN}",
+}
+```
+
+このファイルが存在しない環境（クローン直後など）では単純に無視され、既存3カテゴリのみで動作する。
+収集コレクター本体・実行エントリポイントを自分で用意する場合は、`.gitignore`に以下のパターンを追加しておくと配布物に混ざらない。
+
+```gitignore
+collectors/my_topic_collector.py
+nbklm/notebook_ids_local.py
+local_collect_extra.py
+output/local_extra/
+```
+
+詳細は [DOCUMENT.md 11章](DOCUMENT.md#11-バックフィル機構とローカル限定拡張) を参照。
+
+---
+
 ## ファイル構成
 
 ```
@@ -235,13 +297,14 @@ research-collector/
 │   ├── auth_check.yml         # 毎週日曜 AM 5:00 JST
 │   └── auth_keepalive.yml     # 15分おき
 ├── collectors/
-│   ├── zenn_qiita_collector.py
-│   ├── unity_ue_collector.py
-│   ├── cedec_collector.py
-│   └── paper_collector.py
+│   ├── _academic_api.py       # arXiv/Semantic Scholar共通ヘルパー
+│   ├── zenn_qiita_collector.py   # collect() + collect_backfill()
+│   ├── unity_ue_collector.py     # collect() + collect_backfill()
+│   ├── cedec_collector.py        # collect() + collect_backfill()
+│   └── paper_collector.py        # collect() + collect_backfill()
 ├── nbklm/
 │   ├── client.py
-│   ├── notebook_ids.py        # ← セットアップ時に編集
+│   ├── notebook_ids.py        # ← セットアップ時に編集(ローカル拡張の自動マージも実装)
 │   ├── seen_urls.py
 │   └── auth_monitor.py        # Cookie残日数の事前検知
 ├── scripts/
@@ -252,6 +315,8 @@ research-collector/
 ├── refresh_auth.ps1           # 認証更新スクリプト（PowerShell）
 ├── run_auth_refresh.bat       # タスクスケジューラ起動用バッチ
 ├── register_task.ps1          # タスクスケジューラ登録スクリプト
+├── register_local_extra_task.ps1 # ローカル限定拡張用タスク登録スクリプト
+├── run_local_extra_collect.bat   # ローカル限定拡張の起動用バッチ
 ├── DOCUMENT.md                # 詳細システム設計書
 └── HANDSON.md                 # ハンズオン資料
 ```
