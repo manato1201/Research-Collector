@@ -10,8 +10,8 @@
     "notebooks_deleted": 0
   },
   "weekly": {
-    "status": "ok",
-    "run_at": "2026-08-15T22:29:35Z",
-    "chars": 8068
+    "status": "error",
+    "run_at": "2026-08-17T03:01:10Z",
+    "error": "digest generation failed"
   }
 }
