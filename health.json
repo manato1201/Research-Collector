@@ -6,8 +6,8 @@
     "new": 0
   },
   "weekly": {
-    "status": "error",
-    "run_at": "2026-08-17T03:01:10Z",
-    "error": "digest generation failed"
+    "status": "ok",
+    "run_at": "2026-08-17T22:31:38Z",
+    "chars": 8052
   }
 }
