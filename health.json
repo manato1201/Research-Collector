@@ -1,10 +1,10 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-08-17T03:54:45Z",
-    "collected": 106,
-    "new": 1,
-    "notebooklm_ok": 2,
+    "run_at": "2026-08-17T15:31:08Z",
+    "collected": 109,
+    "new": 3,
+    "notebooklm_ok": 6,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0
