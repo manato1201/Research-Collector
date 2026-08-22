@@ -1,6 +1,6 @@
 # research-collector ドキュメント
 
-> 作成日: 2026-05-09 / 最終更新: 2026-08-14
+> 作成日: 2026-05-09 / 最終更新: 2026-08-22
 > 対象リポジトリ: `manato1201/Research-Collector`
 > 作成者: 松浦真聖 (TK230178)
 
@@ -683,3 +683,4 @@ gh workflow run auth_keepalive.yml
 | 2026-07-04 | notebooklm-py 0.7.3へアップグレード、auth_keepalive.yml追加（Phase 2）、リトライ・失敗通知・ヘルスダッシュボード追加（Phase 4） |
 | 2026-07-11 | ノートブック自動削除・レポート頻度変更（2日に1回）を追加。seen_urls.txt永続化バグを修正し、満杯だったノートブックをクリーンアップ。auth_keepalive失敗時のIssue通知を追加 |
 | 2026-08-14 | 既存collectorに`collect_backfill(since, until)`を追加(11章)。arXiv APIの日付範囲フィルタとクエリのクォート有無による挙動差を実機確認し対処。`nbklm/notebook_ids.py`にローカル拡張の自動マージ機構(try/except ImportError)を追加、本体3カテゴリ・既存の週次Digestは無変更。ローカル限定の拡張ポイント(`.gitignore`パターン)を整備 |
+| 2026-08-22 | ローカル限定拡張を実機で本番実行し検証完了。NotebookLMへの実追加・2023年分バックフィル・Windows Task Scheduler経由の無人実行(`Start-ScheduledTask`)まで一通り確認。実機テストで「ローカルの認証セッションはGitHub Actions側のキープアライブ対象外で、無人実行タイミング次第では失効している」ことが判明したため、ローカル収集タスクのトリガーを「NotebookLM AuthRefresh」直後に変更 |

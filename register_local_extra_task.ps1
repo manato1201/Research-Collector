@@ -31,8 +31,13 @@ if (-not (Test-Path $BatPath)) {
     exit 1
 }
 
-# トリガー: 1日1回(04:00) — daily_collect.yml(6時間おき)・AuthRefresh(0/6/12/18時)と重ならない時間帯
-$trigger = New-ScheduledTaskTrigger -Daily -At "04:00"
+# トリガー: 1日1回(06:15) — 「NotebookLM AuthRefresh」の06:00トリガー直後(15分バッファ)を狙う。
+# refresh_auth.ps1は毎回notebooklm loginでブラウザログイン待ちになる仕様のため、
+# 人がその場にいないタイミングだとローカルのstorage_state.jsonが更新されないまま
+# 失効している可能性がある。AuthRefresh直後に実行することで、ログイン直後の
+# フレッシュなセッションを使える可能性を上げる(2026-08-22の実機テストで、
+# 認証切れ直後の実行が失敗することを確認したための対応)。
+$trigger = New-ScheduledTaskTrigger -Daily -At "06:15"
 
 # アクション: run_local_extra_collect.bat を実行
 $action = New-ScheduledTaskAction `
@@ -67,7 +72,7 @@ try {
 Write-Host ""
 Write-Host "  ✅ タスクを登録しました" -ForegroundColor Green
 Write-Host "  タスク名: $TaskName"     -ForegroundColor White
-Write-Host "  実行時刻: 1日1回(04:00)"  -ForegroundColor White
+Write-Host "  実行時刻: 1日1回(06:15、AuthRefreshの06:00直後)"  -ForegroundColor White
 Write-Host ""
 Write-Host "  タスクスケジューラで確認:" -ForegroundColor Yellow
 Write-Host "  スタートメニュー > タスクスケジューラ > タスクスケジューラライブラリ" -ForegroundColor White

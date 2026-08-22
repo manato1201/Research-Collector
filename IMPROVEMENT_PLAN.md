@@ -363,16 +363,19 @@ $ScriptPath = "C:\Users\matuu\Desktop\GameDevelopment\Research-Collector\local_c
 - `nbklm/notebook_ids.py` 本体末尾に `notebook_ids_local` の try/except ImportError マージ処理を追加(本体3カテゴリは無変更)。`nbklm/client.py` の `_get_weekly_notebook_ids()` は既存3カテゴリを固定リストで参照する実装だったため、新カテゴリをマージしても既存の週次Digest運用に影響しないことをコード確認済み(懸念していたPhase 7項目4は実装前提が誤りだったことが判明し、対応不要と判明)。
 - `nbklm/notebook_ids_local.py`(gitignore対象)を新規作成。
 - `local_collect_extra.py`(gitignore対象)を新規作成。`main.py`の`run_daily()`と同型の構成(認証確認→収集→重複除去→NotebookLM追加→`seen_urls.txt`更新)。`--backfill --since YYYY-MM-DD [--until YYYY-MM-DD]`でPhase 5のバックフィル機構を呼び出せる。実行ログは`output/local_extra/`(gitignore対象)に保存。
-- `register_local_extra_task.ps1`(通常のtrackedファイル。ドメイン固有情報を含まないため隔離対象外)と、そのラッパー`run_local_extra_collect.bat`を新規作成。`register_task.ps1`の構成(管理者権限チェック・try/catchでの登録結果判定・UTF-8 BOM保存)を踏襲し、加えて対象.batファイルの存在チェックを追加した(gitignore対象ファイルが未作成のままタスク登録だけ進んでしまう事故を防止)。トリガーは1日1回04:00(daily_collect.ymlの6時間おき・AuthRefreshの0/6/12/18時と重ならない時間帯)。
-- 残タスク: 実際にWindows Task Scheduler経由で`Start-ScheduledTask`実行しての通しの動作確認(ローカル環境でのユーザー操作が必要なため未実施)。
+- `register_local_extra_task.ps1`(通常のtrackedファイル。ドメイン固有情報を含まないため隔離対象外)と、そのラッパー`run_local_extra_collect.bat`を新規作成。`register_task.ps1`の構成(管理者権限チェック・try/catchでの登録結果判定・UTF-8 BOM保存)を踏襲し、加えて対象.batファイルの存在チェックを追加した(gitignore対象ファイルが未作成のままタスク登録だけ進んでしまう事故を防止)。トリガーは当初1日1回04:00としていたが、2026-08-22の実機テストで下記の問題が判明したため**06:15に変更**。
+- **実機テストで判明した問題(2026-08-22)**: ローカルの`storage_state.json`はGitHub Actions側の`auth_keepalive.yml`(15分おきのSecretローテーション)の対象外。`refresh_auth.ps1`は毎回`notebooklm login`でブラウザログイン待ちになる仕様のため、無人実行だと実質何もしないまま失効し得る。実際、認証切れ直後の実行は`auth FAILED`で即座に失敗した(再ログイン後の再実行では成功)。対策として、トリガー時刻を「NotebookLM AuthRefresh」の06:00直後(06:15)に変更し、直前のログインの鮮度を利用しやすくした。ただし無人運用での確実性は完全には保証されない(要中長期観察)。
+- 残タスク: 06:15トリガーでの無人自動実行が継続的に成功するかの中長期観察。
 
 ### Final Phase(新テーマ分): 統合検証
 
 以下が全て満たされたら本テーマの完了とみなす:
 - [x] `git status`(および`--ignored`)で新分野コレクター・ローカル設定・収集済み出力のいずれもuntracked/ignoredであり、通常のdiff・コミットに紛れ込まないことを直接確認
 - [ ] 既存 `daily_collect.yml` / `auth_check.yml` / `auth_keepalive.yml` / `weekly_digest.yml` が本テーマ追加後も無変更のまま成功し続ける(追加前後でActions実行結果に差分が無いこと) — これらのワークフローファイル自体は無変更(`git diff`で確認済み)だが、実際のActions実行結果での継続確認は次回のワークフロー実行を待つ必要がある — **要実機確認**
-- [ ] ローカルTask Scheduler経由のバックフィル/新分野収集タスクが手動実行(`Start-ScheduledTask`)で正常完走する — **要実機確認**(タスク登録・実行にはユーザーのローカル操作が必要)
+- [x] ローカルTask Scheduler経由のバックフィル/新分野収集タスクが手動実行(`Start-ScheduledTask`)で正常完走する — **2026-08-22実機確認済み**。通常収集(新規63件中62件成功)・2023年バックフィル(新規330件中318件成功)・`register_local_extra_task.ps1`登録後の`Start-ScheduledTask`実行(新規10件中9件成功)を実施。`seen_urls.txt`は560→950ハッシュへ増加、同一収集の重複除外も正常動作を確認
 - [x] バックフィルで取得した記事のURLハッシュが `seen_urls.txt`(git管理下)に正しく追記され、既存の日次収集(`collect`)との間で二重追加が起きない — `filter_new_articles`/`save_seen`を一時ファイルに対し2回連続実行し、重複が追加されないことを確認済み
+
+**進捗(2026-08-22時点): Phase 5・6・7とも実装完了・実機検証済み。** 唯一残っていた「Task Scheduler経由の無人実行」も本日確認できた(トリガーは04:00→06:15に変更、認証タイミングの制約について上記参照)。残るのは`daily_collect.yml`等の既存ワークフローへの継続的な無影響確認(中長期観察)と、06:15無人実行自体の継続的な成功率観察のみ。
 
 **実装時に判明した重要な訂正(実機検証で判明、当初計画からの変更点):**
 1. arXiv APIの日付範囲バックフィルは、当初計画のskeleton通りの単純な「ページングして`since`未満で打ち切る」方式では、クエリの人気度によっては目的の期間に到達する前にmax_per_queryを使い切ってしまい0件になる問題があった(例: "machine learning"のような高頻度クエリ)。実装ではarXiv APIのサーバー側`submittedDate`フィルタを使う方式に切り替えて解決した(詳細はPhase 5の実装状況を参照)。
