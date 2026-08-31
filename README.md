@@ -15,7 +15,7 @@
 | 重複チェック | 収集済みURLを管理し再追加を防止 |
 | NotebookLM自動追加 | 週次ノートブックへ自動振り分け・追加 |
 | 週次レポート生成 | 収集内容からカテゴリ別日本語まとめレポートを自動生成 |
-| 認証自動更新 | Windowsタスクスケジューラで毎日AM5:30に認証を自動更新 |
+| 認証自動更新 | Windowsタスクスケジューラで1日2回(AM6:00/PM6:00)に認証を自動更新 |
 
 ---
 
@@ -35,9 +35,9 @@
 | タイミング | 実行内容 | 実行環境 |
 |---|---|---|
 | 15分おき | セッションCookie(`__Secure-1PSIDTS`)のキープアライブ | GitHub Actions |
-| 6時間おき(0/6/12/18時) | NotebookLM認証更新（保険） | Windowsタスクスケジューラ |
-| 6時間おき(0/6/12/18時) | 記事収集 → NotebookLM追加 | GitHub Actions |
-| 2日に1回 AM 7:00 | レポート生成（日本語） | GitHub Actions |
+| 1日2回(AM6:00/PM6:00) | NotebookLM認証更新（保険） | Windowsタスクスケジューラ |
+| 1日2回(AM6:00/PM6:00) | 記事収集 → NotebookLM追加 | GitHub Actions |
+| 水曜・日曜 AM 7:00 | レポート生成（日本語） | GitHub Actions |
 | 毎週日曜 AM 5:00 | 認証切れ事前検知・チェック → Issue通知 | GitHub Actions |
 
 ---
@@ -125,7 +125,7 @@ https://github.com/あなたのユーザー名/リポジトリ名/labels
 ### Step 7: タスクスケジューラに登録（認証自動更新）
 
 ```powershell
-# リポジトリのフォルダで実行(6時間おき: 0/6/12/18時のトリガーを register_task.ps1 が登録)
+# リポジトリのフォルダで実行(1日2回: 6:00/18:00のトリガーを register_task.ps1 が登録)
 .\register_task.ps1
 ```
 
@@ -152,7 +152,7 @@ NotebookLMの認証Cookieには失効パターンが2種類あります。
   → これにより「アカウント全体としては数百日単位で有効なSID」を
     実際に使い続けられる状態を維持する
 
-6時間おき（Windowsタスクスケジューラ・保険）
+1日2回・6:00/18:00（Windowsタスクスケジューラ・保険）
   → run_auth_refresh.bat が起動
   → PowerShellウィンドウが開く
   → notebooklm login（ブラウザが開く）
@@ -161,7 +161,7 @@ NotebookLMの認証Cookieには失効パターンが2種類あります。
   → daily_collectを自動再実行
   → ウィンドウが閉じる
 
-6時間おき（GitHub Actions）
+1日2回・6:00/18:00（GitHub Actions）
   → 更新済みのCookieで認証OK
   → 記事収集 → NotebookLMに追加
 ```
@@ -190,7 +190,7 @@ Audio Overviewで耳から学ぶ
   通勤中に今週の技術トレンドをポッドキャスト形式で聴ける
 
 週次レポートを確認する（日本語）
-  2日に1回自動生成
+  水曜・日曜に自動生成
   Actions → Weekly Research Digest → Artifacts → weekly-digest-XX
 ```
 
@@ -292,8 +292,8 @@ output/local_extra/
 ```
 research-collector/
 ├── .github/workflows/
-│   ├── daily_collect.yml      # 6時間おき(0/6/12/18時 JST)
-│   ├── weekly_digest.yml      # 2日に1回 AM 7:00 JST
+│   ├── daily_collect.yml      # 1日2回(AM6:00/PM6:00 JST)
+│   ├── weekly_digest.yml      # 水曜・日曜 AM 7:00 JST
 │   ├── auth_check.yml         # 毎週日曜 AM 5:00 JST
 │   └── auth_keepalive.yml     # 15分おき
 ├── collectors/

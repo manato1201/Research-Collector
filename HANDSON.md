@@ -17,7 +17,7 @@
 - Zenn/Qiita/Unity/UE/CEDECの新着記事を毎日自動収集
 - 卒論テーマに関連する論文を週2回自動収集
 - NotebookLMに蓄積してAI検索・ポッドキャスト生成が使える
-- レポートを2日に1回自動生成
+- レポートを水曜・日曜に自動生成
 - 認証切れ・容量超過・収集失敗を自動で検知して通知・自己修復
 
 **このハンズオンで学べること**（技術トピック）
@@ -148,7 +148,7 @@ git push origin main
 .\register_task.ps1
 ```
 
-毎日AM5:30に認証更新を試みるタスクスケジューラを登録します（15分おきの`auth_keepalive.yml`と合わせた二段構えの保険です）。
+1日2回(AM6:00/PM6:00)に認証更新を試みるタスクスケジューラを登録します（15分おきの`auth_keepalive.yml`と合わせた二段構えの保険です）。
 
 ---
 
@@ -157,7 +157,7 @@ git push origin main
 ```mermaid
 flowchart LR
     subgraph 収集
-        A["RSS/API収集<br/>(6時間おき)"]
+        A["RSS/API収集<br/>(1日2回)"]
     end
     subgraph 重複除去
         B["seen_urls.txt と照合<br/>(SHA256ハッシュ)"]
@@ -168,7 +168,7 @@ flowchart LR
     subgraph 活用
         D["チャット検索"]
         E["Audio Overview"]
-        F["レポート生成<br/>(2日に1回)"]
+        F["レポート生成<br/>(水曜・日曜)"]
     end
 
     A --> B --> C --> D
@@ -262,7 +262,7 @@ Q: DirectX12に関する記事をまとめて
 
 ### レポートの確認
 
-2日に1回自動生成されます。Actionsの`Artifacts`からMarkdownファイルをダウンロードして確認できます。
+水曜・日曜に自動生成されます。Actionsの`Artifacts`からMarkdownファイルをダウンロードして確認できます。
 
 ---
 

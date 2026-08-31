@@ -22,11 +22,9 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
     exit 1
 }
 
-# トリガー: 6時間おき(0:00 / 6:00 / 12:00 / 18:00) — daily_collect.ymlのスケジュールに合わせる
+# トリガー: 1日2回(6:00 / 18:00) — daily_collect.ymlのスケジュールに合わせる
 $trigger = @(
-    New-ScheduledTaskTrigger -Daily -At "00:00"
     New-ScheduledTaskTrigger -Daily -At "06:00"
-    New-ScheduledTaskTrigger -Daily -At "12:00"
     New-ScheduledTaskTrigger -Daily -At "18:00"
 )
 
@@ -63,7 +61,7 @@ try {
 Write-Host ""
 Write-Host "  ✅ タスクを登録しました" -ForegroundColor Green
 Write-Host "  タスク名: $TaskName"     -ForegroundColor White
-Write-Host "  実行時刻: 6時間おき(0:00 / 6:00 / 12:00 / 18:00)"  -ForegroundColor White
+Write-Host "  実行時刻: 1日2回(6:00 / 18:00)"  -ForegroundColor White
 Write-Host ""
 Write-Host "  タスクスケジューラで確認:" -ForegroundColor Yellow
 Write-Host "  スタートメニュー > タスクスケジューラ > タスクスケジューラライブラリ" -ForegroundColor White
