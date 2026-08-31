@@ -37,7 +37,7 @@
 | 週2回論文収集 | arXiv・Semantic Scholarから関連論文を収集（月・木） |
 | 重複チェック | 収集済みURLをハッシュ管理し、Gitへ永続化して再追加を防止 |
 | NotebookLM自動追加 | 週次ノートブックへ自動振り分け・追加 |
-| レポート生成 | Deep Researchで調査レポートを自動生成（2日に1回） |
+| レポート生成 | Deep Researchで調査レポートを自動生成（水曜・日曜） |
 | 認証の無人維持 | セッションCookieを15分おきに自動ローテーション |
 | ノートブック容量管理 | 上限に近づいたら古いノートブックを自動削除 |
 | 障害の可視化 | 失敗時にGitHub Issueで通知、復旧時に自動クローズ |
@@ -62,8 +62,8 @@ flowchart TB
     subgraph GHA["GitHub Actions"]
         direction TB
         KA["auth_keepalive.yml<br/>15分おき"]
-        DC["daily_collect.yml<br/>6時間おき(0/6/12/18時 JST)"]
-        WD["weekly_digest.yml<br/>2日に1回 AM7:00 JST"]
+        DC["daily_collect.yml<br/>1日2回(AM6:00/PM6:00 JST)"]
+        WD["weekly_digest.yml<br/>水曜・日曜 AM7:00 JST"]
         AC["auth_check.yml<br/>毎週日曜 AM5:00 JST"]
     end
 
@@ -159,7 +159,7 @@ NotebookLMの認証Cookieには、性質の異なる2つの失効パターンが
 
 ```mermaid
 flowchart LR
-    A["① auth_keepalive.yml<br/>15分おきにセッションをローテーション"] -->|"死んだら"| B["② Windowsタスクスケジューラ<br/>毎日5:30に保険としてログイン"]
+    A["① auth_keepalive.yml<br/>15分おきにセッションをローテーション"] -->|"死んだら"| B["② Windowsタスクスケジューラ<br/>1日2回(6:00/18:00)に保険としてログイン"]
     B -->|"それでも切れたら"| C["③ auth_check.yml / daily_collect.yml<br/>失敗を検知しIssueで通知"]
     C --> D["ユーザーが refresh_auth.ps1 を実行"]
     D --> A
@@ -167,7 +167,7 @@ flowchart LR
 
 - **① auth_keepalive.yml**（`.github/workflows/auth_keepalive.yml`）: `notebooklm auth refresh` でセッションを軽量にローテーションし、`NOTEBOOKLM_AUTH_JSON` Secretへ書き戻す。新規ログインを伴わないためBot検知リスクが低い。
   - ⚠️ **既知の制約**: GitHub Actionsは15分間隔のような高頻度cronを負荷状況次第で大幅に遅延させる（実測で1〜2.5時間の遅延を確認）。そのため単独では100%の信頼性は無い。
-- **② Windowsタスクスケジューラ**: 毎日AM5:30に`refresh_auth.ps1`を実行する保険。①が機能しなかった日でもここで復旧する。
+- **② Windowsタスクスケジューラ**: 1日2回(AM6:00/PM6:00)に`refresh_auth.ps1`を実行する保険。①が機能しなかった日でもここで復旧する。
 - **③ Issue通知**: `auth_keepalive.yml` / `daily_collect.yml` / `weekly_digest.yml` / `auth_check.yml` のいずれかで認証失敗を検知したら `auth-expired` ラベルでIssueを自動作成する。`refresh_auth.ps1`成功時に自動クローズされる。
 
 ### 3.2 Cookie残日数の事前検知（Phase 1）
@@ -378,7 +378,7 @@ Actionsタブ → `Daily Research Collect` → `Run workflow` で手動実行し
 .\register_task.ps1
 ```
 
-毎日AM5:30に`refresh_auth.ps1`を実行する予約タスクを登録する。ブラウザでの再ログインが必要な場合に備えた保険であり、auth_keepaliveが正常動作していれば通常は不要。
+1日2回(AM6:00/PM6:00)に`refresh_auth.ps1`を実行する予約タスクを登録する。ブラウザでの再ログインが必要な場合に備えた保険であり、auth_keepaliveが正常動作していれば通常は不要。
 
 ---
 
@@ -387,8 +387,8 @@ Actionsタブ → `Daily Research Collect` → `Run workflow` で手動実行し
 ```
 Research-Collector/
 ├── .github/workflows/
-│   ├── daily_collect.yml      # 6時間おき(0/6/12/18時 JST)
-│   ├── weekly_digest.yml      # 2日に1回 AM 7:00 JST
+│   ├── daily_collect.yml      # 1日2回(AM6:00/PM6:00 JST)
+│   ├── weekly_digest.yml      # 水曜・日曜 AM 7:00 JST
 │   ├── auth_check.yml         # 毎週日曜 AM 5:00 JST（Cookie残日数事前検知）
 │   └── auth_keepalive.yml     # 15分おき（セッションローテーション）
 ├── collectors/
@@ -435,9 +435,9 @@ Research-Collector/
 | タイミング | 内容 | 実行環境 |
 |---|---|---|
 | 15分おき | セッションCookieのキープアライブ | GitHub Actions |
-| 毎日 AM 5:30 JST | 認証更新（保険） | Windowsタスクスケジューラ |
-| 6時間おき(0/6/12/18時 JST) | デイリー収集 → NotebookLMへ追加 | GitHub Actions |
-| 2日に1回 AM 7:00 JST | レポート生成（Deep Research） | GitHub Actions |
+| 1日2回(AM6:00/PM6:00 JST) | 認証更新（保険） | Windowsタスクスケジューラ |
+| 1日2回(AM6:00/PM6:00 JST) | デイリー収集 → NotebookLMへ追加 | GitHub Actions |
+| 水曜・日曜 AM 7:00 JST | レポート生成（Deep Research） | GitHub Actions |
 | 毎週日曜 AM 5:00 JST | Cookie残日数の事前検知 | GitHub Actions |
 
 ### NotebookLMの活用方法
@@ -453,7 +453,7 @@ Research-Collector/
   → 通勤中に今週の技術トレンドを耳で聞ける
 
 ④ レポートを確認する
-  → 2日に1回自動生成されたMarkdownをActionsのArtifactsで確認
+  → 水曜・日曜に自動生成されたMarkdownをActionsのArtifactsで確認
 ```
 
 ### 認証が切れた場合
@@ -684,3 +684,4 @@ gh workflow run auth_keepalive.yml
 | 2026-07-11 | ノートブック自動削除・レポート頻度変更（2日に1回）を追加。seen_urls.txt永続化バグを修正し、満杯だったノートブックをクリーンアップ。auth_keepalive失敗時のIssue通知を追加 |
 | 2026-08-14 | 既存collectorに`collect_backfill(since, until)`を追加(11章)。arXiv APIの日付範囲フィルタとクエリのクォート有無による挙動差を実機確認し対処。`nbklm/notebook_ids.py`にローカル拡張の自動マージ機構(try/except ImportError)を追加、本体3カテゴリ・既存の週次Digestは無変更。ローカル限定の拡張ポイント(`.gitignore`パターン)を整備 |
 | 2026-08-22 | ローカル限定拡張を実機で本番実行し検証完了。NotebookLMへの実追加・2023年分バックフィル・Windows Task Scheduler経由の無人実行(`Start-ScheduledTask`)まで一通り確認。実機テストで「ローカルの認証セッションはGitHub Actions側のキープアライブ対象外で、無人実行タイミング次第では失効している」ことが判明したため、ローカル収集タスクのトリガーを「NotebookLM AuthRefresh」直後に変更 |
+| 2026-08-22 | 収集頻度を1日4回(6時間おき)から1日2回(AM6:00/PM6:00)に削減。週次レポート生成を「2日に1回」から「水曜・日曜」の固定曜日に変更。`daily_collect.yml`/`weekly_digest.yml`のcron、`register_task.ps1`のタスクスケジューラトリガーを同期して更新 |
