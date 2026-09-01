@@ -1,13 +1,9 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-08-31T21:04:05Z",
-    "collected": 104,
-    "new": 2,
-    "notebooklm_ok": 4,
-    "notebooklm_skip": 0,
-    "notebooklm_errors": 0,
-    "notebooks_deleted": 0
+    "run_at": "2026-09-01T09:01:57Z",
+    "collected": 81,
+    "new": 0
   },
   "weekly": {
     "status": "ok",
