@@ -1,17 +1,17 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-08-31T09:30:33Z",
-    "collected": 104,
-    "new": 5,
-    "notebooklm_ok": 10,
+    "run_at": "2026-09-12T09:02:46Z",
+    "collected": 83,
+    "new": 4,
+    "notebooklm_ok": 8,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0
   },
   "weekly": {
-    "status": "ok",
-    "run_at": "2026-08-31T09:03:30Z",
-    "chars": 6806
+    "status": "error",
+    "run_at": "2026-09-07T09:01:01Z",
+    "error": "digest generation failed"
   }
 }
