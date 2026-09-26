@@ -47,7 +47,7 @@
 <!-- HEALTH_START -->
 | 実行 | 最終実行 | 詳細 |
 |---|---|---|
-| Daily Collect | ✅ 2026-09-26T09:02:13Z | 収集81件 / 新規2件 / NotebookLM追加4件 |
+| Daily Collect | ✅ 2026-09-26T21:02:23Z | 収集81件 / 新規2件 / NotebookLM追加4件 |
 | Weekly Digest | ⚠️ 2026-09-21T09:00:57Z | digest generation failed |
 <!-- HEALTH_END -->
 
