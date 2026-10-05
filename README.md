@@ -48,7 +48,7 @@
 | 実行 | 最終実行 | 詳細 |
 |---|---|---|
 | Daily Collect | ✅ 2026-10-04T21:02:36Z | 収集79件 / 新規3件 / NotebookLM追加6件 |
-| Weekly Digest | ⚠️ 2026-09-28T09:01:10Z | digest generation failed |
+| Weekly Digest | ⚠️ 2026-10-05T09:00:54Z | digest generation failed |
 <!-- HEALTH_END -->
 
 *daily_collect / weekly_digest 実行のたびに自動更新されます。*
