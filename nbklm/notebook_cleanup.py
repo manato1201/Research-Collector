@@ -17,6 +17,14 @@ MAX_NOTEBOOKS = 480
 
 _WEEKLY_TITLE_RE = re.compile(r"^.+-(\d{4})-W(\d{2})$")
 
+# 直近の cleanup 実行時に確認したノートブック総数(削除前)。health.json の notebooks_total と
+# 入口ページ(index.html)の数値に使う。未実行なら None。
+LAST_TOTAL: int | None = None
+
+
+def last_total() -> int | None:
+    return LAST_TOTAL
+
 
 def _is_deletable(notebook) -> bool:
     """自動生成された週次ノートブックのみを削除対象とする(手動作成物・固定ノートブックは保護)"""
@@ -35,8 +43,10 @@ async def cleanup_oldest_notebooks_async(
     ノートブック総数がmax_notebooksを超えていたら、最も古い週次ノートブックから
     順に削除し、超過分を解消する。削除したノートブック名のリストを返す。
     """
+    global LAST_TOTAL
     notebooks = await client.notebooks.list()
     total = len(notebooks)
+    LAST_TOTAL = total
     if total <= max_notebooks:
         return []
 

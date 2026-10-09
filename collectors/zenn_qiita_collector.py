@@ -8,7 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .retry import fetch_feed
+from .retry import fetch_feed, record_failure
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ ZENN_FEEDS = [
     ("https://zenn.dev/topics/hlsl/feed",          "unity",   "zenn"),
     ("https://zenn.dev/topics/gamedev/feed",       "unity",   "zenn"),
     ("https://zenn.dev/topics/houdini/feed",       "unity",   "zenn"),
+    ("https://zenn.dev/topics/pcg/feed",           "unreal",  "zenn"),   # UE PCG(プロシージャル生成)
 ]
 
 QIITA_FEEDS = [
@@ -31,6 +32,7 @@ QIITA_FEEDS = [
     ("https://qiita.com/tags/directx12/feed",      "unity",   "qiita"),
     ("https://qiita.com/tags/hlsl/feed",           "unity",   "qiita"),
     ("https://qiita.com/tags/gamedev/feed",        "unity",   "qiita"),
+    ("https://qiita.com/tags/pcg/feed",            "unreal",  "qiita"),  # UE PCG(プロシージャル生成)
 ]
 
 ALL_FEEDS = ZENN_FEEDS + QIITA_FEEDS
@@ -94,6 +96,7 @@ def collect(max_per_feed: int = 20) -> list[dict]:
 
         except Exception as e:
             logger.warning(f"[{platform}] fetch failed {feed_url}: {e}")
+            record_failure(feed_url, e)
 
     logger.info(f"[zenn_qiita] total {len(articles)} articles collected")
     return articles
