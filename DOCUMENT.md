@@ -1,6 +1,6 @@
 # research-collector ドキュメント
 
-> 作成日: 2026-05-09 / 最終更新: 2026-08-22
+> 作成日: 2026-05-09 / 最終更新: 2026-10-10
 > 対象リポジトリ: `manato1201/Research-Collector`
 > 作成者: 松浦真聖 (TK230178)
 
@@ -19,7 +19,8 @@
 9. [インシデント事例: 重複除去が機能しなかった問題](#9-インシデント事例-重複除去が機能しなかった問題)
 10. [トラブルシューティング](#10-トラブルシューティング)
 11. [バックフィル機構とローカル限定拡張](#11-バックフィル機構とローカル限定拡張)
-12. [付録](#12-付録)
+12. [2026-10の改善 収集の拡張と画面](#12-2026-10の改善-収集の拡張と画面)
+13. [付録](#13-付録)
 
 ---
 
@@ -40,7 +41,9 @@
 | レポート生成 | Deep Researchで調査レポートを自動生成（水曜・日曜） |
 | 認証の無人維持 | セッションCookieを15分おきに自動ローテーション |
 | ノートブック容量管理 | 上限に近づいたら古いノートブックを自動削除 |
-| 障害の可視化 | 失敗時にGitHub Issueで通知、復旧時に自動クローズ |
+| 障害の可視化 | 失敗時にGitHub Issueで通知、復旧時に自動クローズ。取得に失敗した収集元は `health.json` と画面に残る(12章) |
+| 分類の補助・意味での重複判定 | 記事を3カテゴリに分類し、判断できないものは人の確認に回す。類似タイトルは代表1本に統合(12章) |
+| 収集結果ビュー | 集まった記事を期間・カテゴリで絞り込める静的HTML(`results.html`)を収集のたびに自動生成(12章) |
 
 ### 技術スタック
 
@@ -215,10 +218,21 @@ flowchart TD
 | ソース | URL |
 |---|---|
 | Unity Blog | `https://blog.unity.com/feed` |
-| Unity Releases | `https://unity.com/releases/lts-vs-tech-stream/feed` |
 | UE Blog | `https://www.unrealengine.com/en-US/rss` |
 
 > ⚠️ **UE Forum**（`forums.unrealengine.com/latest.rss`）はBot弾きで恒常的に失敗していたため2026-07-03に削除済み。
+> ⚠️ **Unity Releases**（`unity.com/releases/lts-vs-tech-stream/feed`）は404でRSSとして存在せず、失敗が記録されていなかっただけだったため2026-10-10に削除済み(12.2)。
+
+### 更新情報・その他（2026-10追加。詳細は12章）
+
+| 収集元 | 取得方法 | 追加先 |
+|---|---|---|
+| SideFX Houdini 変更履歴(バグ修正のみのものは除く) | バージョン別RSS(最新系列を自動選択) | Game-Dev-Tech + Graphics-Research |
+| Cloudflare 変更履歴 | RSS | Software-Engineering |
+| Hugging Face ブログ(モデルの公開) | RSS | Software-Engineering |
+| UE PCG | Zenn / Qiita の `pcg` タグ | Game-Dev-Tech + Graphics-Research |
+| X の投稿 | `x_urls.txt` に書いたURLのみ。中継サービス経由で本文を取得 | Software-Engineering |
+| skills.sh | 新着の監視のみ(通知。導入・NotebookLMへの追加はしない) | — |
 
 ### CEDEC
 
@@ -265,6 +279,8 @@ ISO週番号ベースで毎週自動的に新しいノートブックが作成�
 | unity / unreal | ✅ | ✅ | |
 | cedec / gdc | | ✅ | ✅ |
 | paper / arxiv | | | ✅ |
+| houdini(SideFX変更履歴) | ✅ | ✅ | |
+| cloudflare / model / x_post | | | ✅ |
 
 ### 容量管理
 
@@ -398,6 +414,9 @@ Research-Collector/
 │   ├── unity_ue_collector.py   # collect() + collect_backfill()
 │   ├── cedec_collector.py      # collect() + collect_backfill()
 │   ├── paper_collector.py      # collect() + collect_backfill()
+│   ├── release_notes_collector.py # SideFX / Cloudflare / Hugging Face の更新情報 (S3)
+│   ├── x_posts_collector.py    # x_urls.txt のURLだけを取り込む (S4)
+│   ├── watch_collector.py      # 配布サイトの新着監視。通知のみ (S5)
 │   └── (※ .gitignore対象のローカル限定コレクターが存在する場合あり、11章参照)
 ├── nbklm/
 │   ├── __init__.py
@@ -405,15 +424,24 @@ Research-Collector/
 │   ├── notebook_ids.py          # ノートブックID・振り分けルール定義
 │   ├── notebook_cleanup.py      # 容量上限に近づいたら古いノートブックを自動削除
 │   ├── auth_monitor.py          # Cookie残日数の事前検知
+│   ├── classifier.py            # 分類の補助。どれでもない=人の確認 (S1)
+│   ├── semantic_dedup.py        # 類似タイトルの統合 (S2)
+│   ├── articles_log.py          # 収集記事ログ articles_log.json の読み書き
 │   ├── notebook_ids_local.py    # (.gitignore対象) ローカル拡張カテゴリ定義、存在すれば自動マージ
 │   └── seen_urls.py             # 収集済みURL重複チェック管理（Git管理）
 ├── scripts/
-│   └── update_readme_health.py  # health.json → README運用ステータス表を更新
+│   ├── update_readme_health.py  # health.json → README運用ステータス表を更新
+│   └── build_site.py            # results.html の生成 / index.html の数値の更新 (U1/U2)
 ├── main.py                      # メインエントリーポイント(Phase 5〜7で無変更)
 ├── local_collect_extra.py       # (.gitignore対象) ローカル限定の追加収集エントリポイント
 ├── health.py                    # 実行結果を health.json に記録
 ├── requirements.txt
 ├── seen_urls.txt                 # 収集済みURLハッシュ（Gitで永続化。ローカル収集分も同じファイルを共有）
+├── articles_log.json             # 収集記事ログ（意味重複の比較対象・results.html の入力。Gitで永続化）
+├── watch_state.json              # 新着監視の既知一覧と直近の検知（Gitで永続化）
+├── x_urls.txt                    # X の取り込み対象URL（自分で書く）
+├── results.html                  # 収集結果ビュー（自動生成）
+├── index.html                    # システム解説ページ（数値は自動生成）
 ├── health.json                   # 直近の実行結果（Gitで永続化）
 ├── refresh_auth.ps1              # 認証更新スクリプト（PowerShell）
 ├── run_auth_refresh.bat          # タスクスケジューラ起動用バッチ
@@ -439,6 +467,8 @@ Research-Collector/
 | 1日2回(AM6:00/PM6:00 JST) | デイリー収集 → NotebookLMへ追加 | GitHub Actions |
 | 水曜・日曜 AM 7:00 JST | レポート生成（Deep Research） | GitHub Actions |
 | 毎週日曜 AM 5:00 JST | Cookie残日数の事前検知 | GitHub Actions |
+
+> 2026-10以降、日次・週次の実行のたびに `results.html` と `index.html` の数値も更新される(12.10)。運用上の「やること / やらないこと」は12.8。
 
 ### NotebookLMの活用方法
 
@@ -549,6 +579,18 @@ GitHub Actionsは15分間隔のような高頻度cronを負荷状況次第で大
 
 GitHubはリポジトリに60日間アクティビティがないとcronを停止する。`health.json`/`seen_urls.txt`の自動コミットがアクティビティとして認識されるため通常は止まらない。
 
+### Q: `results.html` の上部に「失敗 n件」が出ている（2026-10以降）
+
+直近の実行で取得に失敗した収集元がある。ページ下部の「取得に失敗した収集元」を開くと、収集元とエラーが分かる(`health.json` の `source_failures` と同じ内容)。Semantic Scholarの`429`は一時的なことが多い。**同じ収集元が毎回失敗する**場合は、URLの変更・廃止の可能性が高い(Unity Releasesフィードがこれで判明した)ので、収集元の定義を見直す。
+
+### Q: 「未分類(要確認)」の記事が増えた
+
+タイトルから3カテゴリのどれにも当てはまらないと判断された記事。ノートブックへの追加は通常どおり行われているので、実害はなく、**人が内容を見て必要か判断するための印**。同じ種類の記事が繰り返し未分類になる場合は、`nbklm/classifier.py` のキーワードを足す(精度は `agreement_report()` で自データから測れる)。
+
+### Q: X投稿が取り込まれない
+
+取得は中継サービス(`api.fxtwitter.com`)に依存しており、止まっている・投稿が非公開/削除済みの場合は静かにスキップされる(`source_failures` に `x:<ユーザー>/<ID>` として記録)。取り込み済みにはならないので、復旧すれば次回の実行で自動的に取り込まれる。URLの書式が `https://x.com/<ユーザー名>/status/<ID>` になっているかも確認する。
+
 ---
 
 ## 11. バックフィル機構とローカル限定拡張
@@ -635,7 +677,188 @@ flowchart TB
 
 ---
 
-## 12. 付録
+## 12. 2026-10の改善 収集の拡張と画面
+
+> 2026-10-10追記。`IMPROVEMENT_PLAN_2026-10.md`(S1〜S7)と `IMPROVEMENT_DESIGN_2026-10.md`(U1〜U4)の実装分。1〜11章の既存の仕組みは変えず、**追加で**載せている。
+
+### 12.1 追加したもの一覧
+
+| ID | 内容 | 場所 | 状態 |
+|---|---|---|---|
+| S1 | 記事の分類を補助(3カテゴリ + 「どれでもない」は人に回す) | `nbklm/classifier.py` | 実装済み。実データで精度測定済み(12.3) |
+| S2 | 意味での重複判定(類似タイトルを代表1本に統合) | `nbklm/semantic_dedup.py` | 実装済み。実データで閾値調整済み(12.4) |
+| S3 | 新しい収集元(SideFX Houdini / Cloudflare 変更履歴 / Hugging Face ブログ / UE PCG) | `collectors/release_notes_collector.py`、`zenn_qiita_collector.py` | 実装済み・実フィードで取得確認 |
+| S4 | X投稿の取り込み(自分が選んだURLのみ) | `collectors/x_posts_collector.py`、`x_urls.txt` | 実装済み・実投稿で取得確認(12.5) |
+| S5 | スキル配布サイトの新着監視(通知のみ) | `collectors/watch_collector.py` | 実装済み・実サイトで初期化確認(12.6) |
+| S6 | 自前ランナーを使う場合の隔離方針 | 本章 12.9 | 文書化 |
+| S7 | 運用ルール(やること / やらないこと / 成果物) | 本章 12.8 | 文書化 |
+| U1 | 入口ページ(1文の見出し + 数値3つ) | `index.html` | 実装済み。数値は生成(12.10) |
+| U2 | 収集結果ビュー(期間・カテゴリ・未分類で絞り込み) | `results.html` | 実装済み・ブラウザで操作確認 |
+| U3 | 決めごと表と、日付・件数の等幅数字 | 本章 12.10 | 実装済み |
+| U4 | ライト/ダークのテーマ | `index.html`、`results.html`、`LECTURE.html` | 実装済み |
+
+```mermaid
+flowchart TB
+    subgraph Collect["収集(各収集元は独立。1つ失敗しても他は継続)"]
+        direction LR
+        A1["Zenn / Qiita<br/>(+ pcg タグ)"]
+        A2["Unity / UE"]
+        A3["CEDEC"]
+        A4["論文(月・木)"]
+        A5["更新情報 S3<br/>SideFX / Cloudflare / HF"]
+        A6["X投稿 S4<br/>x_urls.txt のみ"]
+    end
+    Collect --> U["同一実行内のURL重複除去"] --> S["seen_urls.txt で既収集を除外"]
+    S --> C["S1 分類(補助)<br/>3カテゴリ + どれでもない"]
+    C --> D["S2 意味での重複判定<br/>類似タイトルを代表1本に統合"]
+    D --> N["NotebookLM へ追加<br/>(X投稿はテキストソース)"]
+    N --> L["articles_log.json<br/>(added / failed / merged)"]
+    C -. "どれでもない" .-> R["未分類 = 人の確認<br/>(results.html / health.json)"]
+    W["S5 新着監視<br/>skills.sh(通知のみ)"] -. "NotebookLMへは追加しない" .-> V
+    L --> V["scripts/build_site.py"]
+    H["health.json<br/>by_source / source_failures"] --> V
+    V --> P1["results.html (U2)"]
+    V --> P2["index.html の数値 (U1)"]
+```
+
+### 12.2 新しい収集元(S3)
+
+| 収集元 | 取得方法 | 備考 |
+|---|---|---|
+| SideFX(Houdini)変更履歴 | `https://www.sidefx.com/changelog/rss/<系列>/`。最新の系列(例: `22_0`)を変更履歴ページから自動で選ぶ | 日次ビルドごとのバグ修正が大量に並ぶため、タイトルが `<ビルド番号>: Fixed ...` の形のものは除外し、機能追加・改善だけを拾う(最大5件/回) |
+| Cloudflare 変更履歴 | `https://developers.cloudflare.com/changelog/rss/index.xml` | 全履歴(1,300件超)を返すため新しい順に最大5件/回 |
+| Hugging Face ブログ(モデルの公開ページ) | `https://huggingface.co/blog/feed.xml` | 最大3件/回 |
+| UE PCG | Zenn / Qiita の `pcg` タグ | 既存のタグ別RSSに追加 |
+
+振り分け先: `houdini` → Game-Dev-Tech + Graphics-Research、`cloudflare` / `model` / `x_post` → Software-Engineering(`nbklm/notebook_ids.py`)。
+
+> ⚠️ **削除した収集元**: `https://unity.com/releases/lts-vs-tech-stream/feed` は404で、RSSとして存在しない。取得失敗を `health.json` に記録するようにしたことで、これまで握りつぶされていた失敗として判明したため、UE Forumと同様に削除した。
+
+### 12.3 分類の補助(S1)
+
+入力は記事タイトル(あれば本文の先頭300文字)、選択肢は3カテゴリ + 「どれでもない」。**どれでもない記事は人の確認に回す**(`health.json` の `unclassified`、`results.html` の「未分類(要確認)」チップ)。
+
+- **ノートブックへの振り分けは変えない**。振り分けは従来どおり収集元(`source_type`)で決まる。この分類は「その振り分けが妥当か」を確かめる補助で、確定判断ではない。
+- 実装はキーワード方式(外部モデル・追加依存なし)。公式の分類モデルは英語が最高精度で日本語は自データでの検証を案内しているため、**日本語記事での精度は `agreement_report()` で自データから測る**運用にした。モデル方式へ差し替える場合も `classify()` の入出力を保てばよい。
+- UnityタグやCloudflare変更履歴のように話題が収集元で絞られているものは、タイトルに手がかり語が無くてもその話題に属すると見なす弱い事前情報を持つ。CEDEC・arXiv・X投稿などの汎用ソースは事前情報なしで、タイトルだけで判断する。
+
+**実データでの測定**(2026-10-10、現行の7種の収集元から取得した234件のタイトル。現行の振り分け先を「正」として比較):
+
+| 指標 | 件数 | 割合 |
+|---|---|---|
+| 振り分け先と一致 | 196 | 83.8% |
+| どれでもない(人に回る) | 12 | 5.1% |
+| 振り分け先と不一致 | 26 | 11.1% |
+
+無関係なタイトル(夕食・旅行・金融)は期待どおり「どれでもない」になった。
+
+**測定で分かったこと**: 不一致26件のうち22件はCEDEC。CEDECの振り分け先は Graphics-Research + Software-Engineering だが、分類器は35件中22件を「ゲーム開発」と判定した(セッション名に「ゲーム」「バトル」等が多いため)。**CEDECの振り分け先に Game-Dev-Tech を足すかどうか**は運用上の判断なので、今回は変更していない。
+
+### 12.4 意味での重複判定(S2)
+
+URLのSHA256では別URLの同じ話題(ZennとQiitaの転載、同一論文のarXiv版とDOI版)を見分けられない。タイトルを「英単語 + 日本語の文字2-gram」の袋にしてコサイン類似度を取り、閾値以上のものを1グループにして**代表1本だけ**をNotebookLMへ追加する。代表は公式の一次情報 > 論文 > 個人記事の順で選ぶ。統合した記事は `articles_log.json` に `status: merged`(統合先URL付き)で残り、`seen_urls.txt` にも載る(次回以降に再判定されない)。直近14日に追加できた記事とも比較する。
+
+**閾値の調整結果**(上記234件で、ペアごとの類似度を確認):
+
+| 発見したパターン | 起きること | 対策 |
+|---|---|---|
+| 連載「入門者Houdini勉強譚 その1/その2/その3/その4」 | 数字1桁しか違わず類似度 1.00 → **誤って統合される** | タイトル中の数字列(連載番号・バージョン・年月日)が一致しなければ、類似度に関わらず重複扱いしない |
+| 「Cloudflare One Client for macOS / Windows / Linux」 | OS別の別記事なのに 0.94 | 閾値を 0.80 → **0.95** に引き上げ |
+| ZennとQiitaの転載記事 | 1.00 | 閾値0.95で拾える(今回の測定で統合された唯一のペア) |
+
+閾値を低くすると別の話題を誤って統合するため、**誤統合を避けることを優先**した。精度が足りなければ `similarity()` を埋め込みモデルの類似度に差し替える(呼び出し側は変わらない)。環境変数 `SEMANTIC_DEDUP=0` で無効化、`SEMANTIC_DEDUP_THRESHOLD` で閾値を変更できる。
+
+### 12.5 X投稿の取り込み(S4)
+
+`x_urls.txt` に書いた投稿URL**だけ**を取り込む(検索・タイムライン巡回・フォロー先の自動取得はしない)。x.com は自動取得を拒否するため、サードパーティの中継サービス `api.fxtwitter.com` のJSONを使う。
+
+- 取得できない投稿(存在しない・非公開・中継サービスの停止)は**静かに失敗**する。例外にせず `health.json` の `source_failures` に記録し、`seen_urls.txt` には載せない。したがって**次回の実行で自動的に再試行**される。NotebookLMへの追加に失敗した場合も同様。
+- NotebookLM には本文 + 出典URLを**テキストソース**として追加する(URLでは取り込めないため)。LLMによる要約はしていない。
+- 書式は `x_urls.txt` 冒頭のコメントを参照。中継サービスに依存するため、止まったら取り込めなくなる(他の収集元には影響しない)。
+
+### 12.6 配布サイトの新着監視(S5)
+
+`collectors/watch_collector.py` が skills.sh のページを巡回し、一覧に**新しく現れた**項目を検知する。**通知のみ**で、導入(ダウンロード・インストール・NotebookLMへの追加)は一切しない。導入するかは、人が `SKILL.md` などの中身を確認してから決める。
+
+- 初回の実行は現状の一覧(約185件)を「既知」として保存するだけで、通知しない。
+- 検知結果は `watch_state.json` に残り、`results.html` の「配布サイトの新着」に表示される。`health.json` の `watch_new` に件数が入る。
+- 監視対象は `WATCHES` に項目を足せば増やせる。
+
+### 12.7 health.json の追加項目
+
+日次収集(`daily`)に以下を追加した。取得に失敗した収集元は `source_failures` に残る。
+
+| 項目 | 内容 |
+|---|---|
+| `by_source` | 収集元ごとの取得件数 |
+| `failed_sources` / `source_failures` | 取得に失敗した収集元の数と、収集元・エラーの一覧(最大20件) |
+| `unclassified` | 「どれでもない」(人の確認が必要)になった新規記事の数 |
+| `merged` | 意味で重複と判定して統合した記事の数 |
+| `watch_new` | 新着監視で検知した項目の数 |
+| `notebooks_total` | NotebookLM のノートブック総数(入口ページの数値に使う) |
+
+README の運用ステータス表には、0件でない `failed_sources` / `unclassified` / `merged` だけが出る(出ていれば目に付く)。
+
+### 12.8 運用ルール(S7)
+
+自動化の暴走を防ぐため、このシステムが**やること / やらないこと / 成果物**を固定する。
+
+| やること | やらないこと |
+|---|---|
+| 公開されたRSS・API・ページの収集 | 収集内容の自動公開(SNS投稿・外部サイトへのアップロード) |
+| 重複の判定と統合(URL・タイトル類似) | 収集した記事・NotebookLMの中身を第三者のサービスへ送ること(例外はX取得で、投稿URLを中継サービスに渡す) |
+| 分類(補助)と、判断できないものを人に回すこと | 「どれでもない」記事の自動での振り分け・削除 |
+| NotebookLMへの追加と週次レポートの生成 | スキル・プラグインの自動導入(新着の通知だけ行う) |
+| 取得状況・失敗の記録と、失敗時のIssue通知 | 認証情報(Secret)の自動での取得・外部送信。Secretの更新は `auth_keepalive.yml` が自分のSecretを書き戻す範囲のみ |
+| 容量上限(480冊)を超えたときの最古の週次ノートブックの削除 | 上記以外の自動削除(固定名のノートブックは削除対象外) |
+
+**成果物**: ① 週次レポート(`output/weekly_digest_*.md`)、② 重複・統合のログ(`articles_log.json` の `status: merged`)、③ 取得状況(`health.json`)、④ 収集結果ビュー(`results.html`)、⑤ 新着監視の通知(`watch_state.json`)。
+
+**止め方**: 収集を止める → Actions で `Daily Research Collect` を無効化。意味での重複判定だけ止める → `SEMANTIC_DEDUP=0`。X取り込みを止める → `x_urls.txt` を空にする(取得済みは再取得されない)。`results.html` の公開(GitHub Pages等)は人が決める。自動では公開設定を変えない。
+
+### 12.9 自前ランナーを使う場合の隔離方針(S6)
+
+**現状**は GitHub が用意する使い捨ての仮想マシン(`ubuntu-latest`)で動いており、ジョブの権限は `contents: write` と `issues: write` に絞っている。`NOTEBOOKLM_AUTH_JSON` などのSecretは、必要なステップにだけ渡している。`GH_PAT_SECRETS_WRITE` は `auth_keepalive.yml` だけが使う。
+
+**自前ランナー(self-hosted)を使う場合の方針**(30分のタイムアウトやcron停止を避けたくなったとき。現時点では使っていない):
+
+- **専用の環境で動かす**: 普段使いのPCではなく、専用のVM/コンテナ。ランナーを動かすOSユーザーは管理者権限なし。個人のファイル(認証情報・SSH鍵・ブラウザのプロフィール等)が見えない場所に置く。
+- **使い捨てにする**: ジョブごとに作り直す(`--ephemeral`)。ワークスペースを次の実行に持ち越さない。
+- **渡すSecretは最小限**: `NOTEBOOKLM_AUTH_JSON` と、そのジョブが書き戻しに使う分だけ。
+- **ネットワークは許可リスト**: 収集元(各RSS・arXiv・Semantic Scholar・skills.sh・`api.fxtwitter.com`・`notebooklm.google.com`・`github.com`)に絞る。
+- **公開リポジトリには使わない**: フォークからのPRで任意のコードが自前ランナー上で動くため。
+- **この手元のPCをランナーにしない**: ローカル限定の収集(11章、Windowsタスクスケジューラ)は手元のPCで動かしているが、これは**ランナーではなく単なる予約タスク**で、GitHubからの指示で動くことはない。この関係を保つ。
+
+分離方式の選び方(サンドボックス化したBashツール / サンドボックスランタイム / Devコンテナ / カスタムコンテナ / 仮想マシン / クラウドセッションの6方式を、分離範囲・Docker要否・手間で比較する)は、上記の「専用VM/コンテナ + 使い捨て」を満たす方式から手間の少ないものを選ぶ、という基準で判断する。
+
+### 12.10 収集結果ビューとUIの決めごと(U1〜U4)
+
+`scripts/build_site.py` が、日次・週次のワークフロー内で `articles_log.json` / `health.json` / `watch_state.json` から**静的HTMLを生成**する(サーバー不要)。
+
+- **`results.html`(U2)**: 期間タブ(今週 / 先月 / すべて)、カテゴリチップ(件数付き)、「未分類(要確認)」の専用チップ、新しい順/古い順。行は「記号 + タイトル + 灰色の副題(収集元・ノートブック・キーワード)+ 右に日付」の2段。記号の形で状態を表す(塗り=追加済み、橙の輪=追加失敗、灰色の輪=類似記事に統合)。画面上部に「最終収集 … · 取得 n · 新規 n · 失敗 n件」を固定し、失敗した収集元は折りたたみで見られる。
+- **`index.html` の入口(U1)**: 「毎日、勝手に**集まる**技術情報」の1文(アクセントは1語だけ)、数値3つ(収集元の数・今週の収集数・ノートブック数)、「仕組みを見る ↓」。**数値は手書きせず**ビルド時に生成する(`<!--SITE_STATS_START-->` 〜 `<!--SITE_STATS_END-->` の間)。値が分からないときは「—」を出し、偽の数字は出さない。以前あった手書きの数値(「6」「150」「3」「0」)は廃止した。
+- **テーマ(U4)**: ライト(紙の色調)/ダークをトークンで切り替える。OSの設定に従い、右上のボタンで手動に切り替えられる(選択は `localStorage`)。`index.html` の構成図(SVG)も、色をトークン化してライトで読めることを確認した。
+
+**決めごと表(U3)**
+
+| 項目 | 決め |
+|---|---|
+| 見出し | 見出し + 灰色の副題の2段 |
+| 色の役割 | 紫 = 主操作・リンク・選択中 / シアン = 収集済み・新着 / 橙 = 注意(失敗・要確認)。ほかの用途に使わない。カテゴリは色で区別せず、中立の見た目にする |
+| 数字・日付 | 半角・等幅(`tabular-nums`)。日付は `2026-10-06` に統一 |
+| 取得状況 | 「最終収集 … · 取得 n · 新規 n · 失敗 n件」を画面上部に固定。失敗が0件でなければ橙 |
+| 絵文字 | 使わない(カード等のアイコンも廃止) |
+| 開閉と遷移の矢印 | 開閉は下向き、ページ遷移は右向き(`→`)、外部リンクは `↗`、ページ内のスクロールは `↓` |
+| 並べる要素 | 列数と要素数を合わせる(概要カードは8枚 = 4列×2段 / 2列×4段 / 1列) |
+| スマホ | 横スクロールさせない(広い表はその枠の中でスクロール) |
+| 動き | `prefers-reduced-motion` で止める |
+
+> **確認済みの範囲**: 収集〜分類〜意味重複〜ログ〜health記録までの日次収集は、実ネットワークで取得し、NotebookLMへの書き込みだけを模擬した状態で通しの動作を確認した(2回目の実行で取得済みがスキップされ、失敗したX投稿だけが再試行されることを含む)。**GitHub Actions上の実運用での初回実行は、このコミットのpush後**となる。`articles_log.json` が貯まるまでは、入口ページの「今週の収集数」は「—」と表示される。
+> **既存のまま残っていること**: `LECTURE.html` はスマホ幅で横にはみ出す(今回の変更前から同じ)。今回の対象はテーマの追加のみ。
+
+---
+
+## 13. 付録
 
 ### GitHub Secrets 一覧
 
@@ -685,3 +908,4 @@ gh workflow run auth_keepalive.yml
 | 2026-08-14 | 既存collectorに`collect_backfill(since, until)`を追加(11章)。arXiv APIの日付範囲フィルタとクエリのクォート有無による挙動差を実機確認し対処。`nbklm/notebook_ids.py`にローカル拡張の自動マージ機構(try/except ImportError)を追加、本体3カテゴリ・既存の週次Digestは無変更。ローカル限定の拡張ポイント(`.gitignore`パターン)を整備 |
 | 2026-08-22 | ローカル限定拡張を実機で本番実行し検証完了。NotebookLMへの実追加・2023年分バックフィル・Windows Task Scheduler経由の無人実行(`Start-ScheduledTask`)まで一通り確認。実機テストで「ローカルの認証セッションはGitHub Actions側のキープアライブ対象外で、無人実行タイミング次第では失効している」ことが判明したため、ローカル収集タスクのトリガーを「NotebookLM AuthRefresh」直後に変更 |
 | 2026-08-22 | 収集頻度を1日4回(6時間おき)から1日2回(AM6:00/PM6:00)に削減。週次レポート生成を「2日に1回」から「水曜・日曜」の固定曜日に変更。`daily_collect.yml`/`weekly_digest.yml`のcron、`register_task.ps1`のタスクスケジューラトリガーを同期して更新 |
+| 2026-10-10 | `IMPROVEMENT_PLAN_2026-10.md` / `IMPROVEMENT_DESIGN_2026-10.md` を実装(12章)。新収集元(SideFX・Cloudflare・Hugging Face・UE PCG)、X投稿の取り込み、skills.sh の新着監視、記事の分類補助と意味での重複判定、取得失敗の `health.json` 記録、収集結果ビュー `results.html`、入口ページの再設計とライト/ダークのテーマ。実データで分類精度(一致83.8%)と重複判定の閾値(0.95)を調整。恒常的に404だった Unity Releases フィードを削除 |

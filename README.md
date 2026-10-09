@@ -12,9 +12,11 @@
 |---|---|
 | 毎日自動収集 | Zenn/Qiita/Unity/UE/CEDECの新着記事をRSS経由で収集 |
 | 論文収集 | arXiv・Semantic Scholarから関連論文を週2回（月・木）収集 |
-| 重複チェック | 収集済みURLを管理し再追加を防止 |
+| 重複チェック | 収集済みURLを管理して再追加を防止。さらに、似たタイトルの記事は代表1本に統合 |
+| 分類の補助 | 記事を3カテゴリに自動で分類。当てはまらないものは「未分類」として人の確認に回す |
 | NotebookLM自動追加 | 週次ノートブックへ自動振り分け・追加 |
-| 週次レポート生成 | 収集内容からカテゴリ別日本語まとめレポートを自動生成 |
+| 週次レポート生成 | 収集内容からカテゴリ別日本語まとめレポートを水曜・日曜に自動生成 |
+| 収集結果ビュー | 集まった記事を期間・カテゴリで絞り込める一覧(`results.html`)を、収集のたびに自動生成 |
 | 認証自動更新 | Windowsタスクスケジューラで1日2回(AM6:00/PM6:00)に認証を自動更新 |
 
 ---
@@ -23,10 +25,14 @@
 
 | ソース | 追加先ノートブック |
 |---|---|
-| Zenn / Qiita（unity/unrealengine/directx/hlsl/gamedev/houdini） | Game-Dev-Tech |
+| Zenn / Qiita（unity/unrealengine/directx/hlsl/gamedev/houdini/pcg） | Game-Dev-Tech |
 | Unity / UE 公式ブログ | Game-Dev-Tech + Graphics-Research |
 | CEDiL新着セッション / CEDEC YouTube | Graphics-Research + Software-Engineering |
+| SideFX Houdini 変更履歴(バグ修正のみのものは除く) | Game-Dev-Tech + Graphics-Research |
 | arXiv / Semantic Scholar（RAG・LLM・DCC学習関連） | Software-Engineering |
+| Cloudflare 変更履歴 / Hugging Face ブログ（モデルの公開） | Software-Engineering |
+| X の投稿（`x_urls.txt` に書いたURLだけ） | Software-Engineering |
+| skills.sh（新着の監視のみ。通知するだけで導入はしない） | — |
 
 ---
 
@@ -214,6 +220,16 @@ ARXIV_QUERIES = [
 ]
 ```
 
+### X の投稿を取り込む
+
+`x_urls.txt` に、取り込みたい投稿のURLを1行ずつ書いてpushする(書式は同ファイル冒頭のコメント)。
+書いたURLだけが対象で、検索やタイムラインの巡回はしない。取得は中継サービス経由のため、
+取得できなかった投稿は静かにスキップされ、次回の実行で自動的に再試行される。
+
+```
+https://x.com/<ユーザー名>/status/<投稿ID>
+```
+
 ### 就活ターゲット企業のブログを追加
 
 ```python
@@ -222,6 +238,17 @@ COMPANY_FEEDS = [
     ("https://tech.yourcompany.co.jp/feed", "unity", "company_blog"),
 ]
 ```
+
+---
+
+## 収集結果を見る
+
+- [`results.html`](results.html) — 集まった記事の一覧。期間(今週 / 先月 / すべて)とカテゴリで絞り込める。画面上部に最終収集・取得件数・失敗件数を固定表示し、
+  どのカテゴリにも当てはまらない記事は「未分類(要確認)」にまとめる。日次・週次の実行のたびに自動で更新される。
+- [`index.html`](index.html) — システムの説明ページ。収集元の数・今週の収集数・ノートブック数は、実際のログから自動で生成される。
+
+どちらもライト/ダークのテーマに対応(右上のボタン)。ローカルで確認するときは、ファイルをブラウザで開くだけでよい。
+設計の詳細と運用ルール(やること / やらないこと)は [DOCUMENT.md 12章](DOCUMENT.md#12-2026-10の改善-収集の拡張と画面) を参照。
 
 ---
 
@@ -298,6 +325,9 @@ research-collector/
 │   └── auth_keepalive.yml     # 15分おき
 ├── collectors/
 │   ├── _academic_api.py       # arXiv/Semantic Scholar共通ヘルパー
+│   ├── release_notes_collector.py # SideFX / Cloudflare / Hugging Face の更新情報
+│   ├── x_posts_collector.py      # x_urls.txt のURLだけを取り込む
+│   ├── watch_collector.py        # 配布サイトの新着監視(通知のみ)
 │   ├── zenn_qiita_collector.py   # collect() + collect_backfill()
 │   ├── unity_ue_collector.py     # collect() + collect_backfill()
 │   ├── cedec_collector.py        # collect() + collect_backfill()
@@ -306,9 +336,16 @@ research-collector/
 │   ├── client.py
 │   ├── notebook_ids.py        # ← セットアップ時に編集(ローカル拡張の自動マージも実装)
 │   ├── seen_urls.py
+│   ├── classifier.py          # 分類の補助(どれでもない = 人の確認)
+│   ├── semantic_dedup.py      # 類似タイトルの統合
+│   ├── articles_log.py        # 収集記事ログ(articles_log.json)
 │   └── auth_monitor.py        # Cookie残日数の事前検知
 ├── scripts/
-│   └── update_readme_health.py # health.json → README運用ステータス表を更新
+│   ├── update_readme_health.py # health.json → README運用ステータス表を更新
+│   └── build_site.py          # results.html の生成 / index.html の数値の更新
+├── x_urls.txt                 # X の取り込み対象URL(自分で書く)
+├── results.html               # 収集結果ビュー(自動生成)
+├── index.html                 # システム解説ページ(数値は自動生成)
 ├── main.py
 ├── health.py                  # 実行結果を health.json に記録
 ├── requirements.txt
