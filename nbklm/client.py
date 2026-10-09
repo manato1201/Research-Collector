@@ -118,16 +118,27 @@ async def _get_weekly_notebook_ids(
 # ------------------------------------------------------------------ #
 
 async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
-    result = {"ok": 0, "skip": 0, "errors": []}
+    """
+    記事を週次ノートブックへ追加する。
+
+    article に "text" があればテキストソース(X投稿など、URLでは取り込めないもの)、
+    無ければURLソースとして追加する。
+
+    戻り値: ok / skip / errors に加え、記事ごとの成否として
+    added_urls(1つ以上のノートブックへ追加できたURL)/ failed_urls(全てのノートブックで失敗したURL)。
+    """
+    result = {"ok": 0, "skip": 0, "errors": [], "added_urls": [], "failed_urls": []}
     year, week = _weekly_label()
 
     async with await _make_client() as client:
         for article in articles:
             url = article.get("url", "")
+            text = article.get("text")
             source_type = article.get("source_type", "zenn")
             categories = SOURCE_TYPE_TO_CATEGORIES.get(
                 source_type, ["game_dev_tech"]
             )
+            added_any = False
 
             for category in categories:
                 nb_id = await _get_or_create_weekly_notebook(
@@ -135,14 +146,22 @@ async def add_articles_to_notebooklm(articles: list[dict]) -> dict:
                 )
                 nb_name = _weekly_name(category, year, week)
                 try:
-                    await client.sources.add_url(nb_id, url, wait=False)
+                    if text:
+                        await client.sources.add_text(
+                            nb_id, article.get("title") or url, text, wait=False
+                        )
+                    else:
+                        await client.sources.add_url(nb_id, url, wait=False)
                     logger.info(f"[NotebookLM] added to {nb_name}: {url[:60]}")
                     result["ok"] += 1
+                    added_any = True
                 except Exception as e:
                     msg = f"{url[:50]} → {nb_name} → {e}"
                     logger.warning(f"[NotebookLM] skip: {msg}")
                     result["skip"] += 1
                     result["errors"].append(msg)
+
+            (result["added_urls"] if added_any else result["failed_urls"]).append(url)
 
     return result
 

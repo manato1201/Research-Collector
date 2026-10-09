@@ -12,7 +12,7 @@ from typing import Optional
 import urllib.request
 from html.parser import HTMLParser
 
-from .retry import fetch_feed, retry
+from .retry import fetch_feed, record_failure, retry
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +133,7 @@ def collect_cedil(max_items: int = 30) -> list[dict]:
 
     except Exception as e:
         logger.warning(f"[CEDiL] fetch failed: {e}")
+        record_failure(CEDIL_TOP_URL, e)
 
     return articles
 
@@ -174,6 +175,7 @@ def collect_cedec_youtube(max_items: int = 20) -> list[dict]:
 
     except Exception as e:
         logger.warning(f"[CEDEC YouTube] fetch failed: {e}")
+        record_failure(CEDEC_YOUTUBE_RSS, e)
 
     return articles
 
