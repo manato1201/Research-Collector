@@ -97,12 +97,31 @@ Secretへ自動的に書き戻す。これには **Secrets書き込み権限を�
 ## 6. NotebookLM との連携フロー
 
 ```
-毎日 AM 6:00
-  → RSS 収集（Zenn/Qiita/Unity Blog/UE Blog）
-  → NotebookLM の各ノートブックにURLを自動追加
+毎日 6:00 / 18:00 (JST)
+  → RSS・API 収集（Zenn/Qiita/Unity Blog/UE Blog/CEDEC/SideFX/Cloudflare/Hugging Face、
+    論文は月・木、X投稿は x_urls.txt のURLのみ）
+  → 重複除去（URL + タイトルの類似）→ 分類の補助（どれでもない = 人の確認）
+  → NotebookLM の各ノートブックに自動追加
+  → articles_log.json / health.json / results.html を更新してコミット
 
-毎週月曜 AM 7:00
-  → Weekly-Digest ノートブックで Deep Research 実行
+水曜・日曜 7:00 (JST)
+  → 当週のノートブックからカテゴリ別の日本語レポートを生成
   → まとめレポート（Markdown）を output/ に保存
   → NotebookLM 上でポッドキャスト・Q&A が生成可能な状態になる
 ```
+
+---
+
+## 7. 2026-10 に追加した機能の設定(任意)
+
+追加のSecretは**不要**。以下は必要なときだけ設定する。詳細は DOCUMENT.md 12章。
+
+| やりたいこと | 設定 |
+|---|---|
+| Xの投稿を取り込む | `x_urls.txt` に `https://x.com/<ユーザー名>/status/<ID>` を1行ずつ書いてpush。書いたURLだけが対象。取得できなかった投稿は次回の実行で再試行される |
+| 似たタイトルの統合(重複判定)を止める | 環境変数 `SEMANTIC_DEDUP=0`。閾値の変更は `SEMANTIC_DEDUP_THRESHOLD`(既定 0.95。低くすると別の話題を誤って統合しやすくなる) |
+| 新着監視の対象を増やす | `collectors/watch_collector.py` の `WATCHES` に追加。通知のみで、導入はされない |
+| 収集結果を見る | `results.html` をブラウザで開く。日次・週次の実行のたびに自動更新される(GitHub Pages等で公開するかは自分で決める) |
+| 分類のキーワードを調整する | `nbklm/classifier.py`。精度は `agreement_report()` で自分のデータから測れる |
+
+`articles_log.json` / `watch_state.json` / `results.html` はGitHub Actionsが自動でコミットする(初回の実行後に現れる)。
