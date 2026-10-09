@@ -7,13 +7,14 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from .retry import fetch_feed
+from .retry import fetch_feed, record_failure
 
 logger = logging.getLogger(__name__)
 
+# unity.com/releases/lts-vs-tech-stream/feed は404(RSSとして存在しない)ため削除済み。
+# 取得失敗を health.json に記録するようにした(2026-10)ことで、これまで握りつぶされていた失敗が判明した。
 UNITY_FEEDS = [
     ("https://blog.unity.com/feed",                          "unity",  "unity_blog"),
-    ("https://unity.com/releases/lts-vs-tech-stream/feed",   "unity",  "unity_release"),
 ]
 
 # UE Forum (forums.unrealengine.com/latest.rss) はBot弾きで失敗率が高いため除外済み(DOCUMENT.md参照)
@@ -69,6 +70,7 @@ def collect(max_per_feed: int = 10) -> list[dict]:
 
         except Exception as e:
             logger.warning(f"[{platform}] failed {feed_url}: {e}")
+            record_failure(feed_url, e)
 
     logger.info(f"[unity_ue] total {len(articles)} articles")
     return articles

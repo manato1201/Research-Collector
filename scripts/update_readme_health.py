@@ -33,6 +33,13 @@ def _row(mode_label: str, entry: dict) -> str:
         )
         if entry.get("notebooks_deleted"):
             detail += f" / 容量上限で{entry['notebooks_deleted']}冊自動削除"
+        # 2026-10追加: 失敗・要確認・統合は0件なら出さない(出ていれば目に付く)
+        if entry.get("failed_sources"):
+            detail += f" / 取得失敗{entry['failed_sources']}件"
+        if entry.get("unclassified"):
+            detail += f" / 要確認{entry['unclassified']}件"
+        if entry.get("merged"):
+            detail += f" / 重複統合{entry['merged']}件"
     elif "chars" in entry:
         detail = f"{entry['chars']}文字生成"
     else:

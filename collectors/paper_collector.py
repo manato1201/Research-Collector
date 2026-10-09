@@ -15,7 +15,7 @@ import urllib.request
 import json
 from datetime import datetime, timezone
 
-from .retry import retry
+from .retry import record_failure, retry
 
 logger = logging.getLogger(__name__)
 
@@ -162,6 +162,7 @@ def collect_arxiv(max_per_query: int = 5) -> list[dict]:
             xml_text = _fetch_xml(url)
         except Exception as e:
             logger.warning(f"[arXiv] fetch failed after retries: {url[:80]} → {e}")
+            record_failure(f"arxiv:{query[:40]}", e)
             continue
 
         papers = _parse_arxiv_xml(xml_text)
@@ -297,6 +298,7 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
             data = _fetch_json(url)
         except Exception as e:
             logger.warning(f"[S2] fetch failed after retries: {url[:80]} → {e}")
+            record_failure(f"semantic_scholar:{query[:40]}", e)
             continue
 
         papers = data.get("data", [])

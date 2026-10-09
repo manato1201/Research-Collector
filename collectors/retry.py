@@ -9,6 +9,22 @@ import time
 
 logger = logging.getLogger(__name__)
 
+# 取得失敗の記録(health.json の source_failures に載せる)。
+# 各collectorは失敗を握りつぶして処理を継続する設計のため、失敗がログにしか残らなかった。
+_FAILURES: list[dict] = []
+
+
+def record_failure(source: str, error: Exception | str) -> None:
+    """取得失敗を1件記録する。source は短い識別名(フィードURLのホスト等)。"""
+    _FAILURES.append({"source": source, "error": str(error)[:160]})
+
+
+def pop_failures() -> list[dict]:
+    """記録済みの失敗を返して空にする。"""
+    items = list(_FAILURES)
+    _FAILURES.clear()
+    return items
+
 
 def retry(times: int = 3, base_delay: float = 2.0):
     """

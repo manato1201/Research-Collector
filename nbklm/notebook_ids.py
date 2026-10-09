@@ -49,6 +49,14 @@ SOURCE_TYPE_TO_CATEGORIES = {
     # 論文 → ソフトウェア工学のみ
     "paper":   ["software_engineering"],
     "arxiv":   ["software_engineering"],
+
+    # 更新情報系(2026-10追加, IMPROVEMENT_PLAN_2026-10.md S3/S4)
+    # SideFX(Houdini)変更履歴 → ゲーム開発 + グラフィクス
+    "houdini":    ["game_dev_tech", "graphics_research"],
+    # Cloudflare変更履歴 / モデル公開ページ(Hugging Face) / 指定したX投稿 → ソフトウェア工学
+    "cloudflare": ["software_engineering"],
+    "model":      ["software_engineering"],
+    "x_post":     ["software_engineering"],
 }
 
 # 週次ノートブック名のテンプレート
