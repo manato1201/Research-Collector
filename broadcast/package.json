@@ -2,7 +2,7 @@
   "name": "research-broadcast-worker",
   "private": true,
   "version": "0.1.0",
-  "description": "ResearchBroadcast Phase 1: 取り込み(ingest)と記事API(D1)。ResearchBroadcast_DESIGN.md 参照",
+  "description": "ResearchBroadcast: 取り込み(ingest)・記事API・episode・ボード・サイト(Workers + D1。無料プラン)。ResearchBroadcast_DESIGN.md 参照",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
