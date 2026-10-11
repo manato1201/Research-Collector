@@ -60,6 +60,19 @@ jobs:
         continue-on-error: true
         run: python scripts/build_site.py
 
+      # 収集した記事を ResearchBroadcast(別システム。ResearchBroadcast_DESIGN.md)へ送る。任意のステップ:
+      # BROADCAST_INGEST_URL / BROADCAST_INGEST_TOKEN のSecretが無ければ何もしない。
+      # 失敗しても収集結果には影響しない(受け手は url_hash で upsert するので、再送しても重複しない)。
+      - name: Send new articles to ResearchBroadcast (optional)
+        if: always()
+        continue-on-error: true
+        env:
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+          BROADCAST_INGEST_TOKEN: ${{ secrets.BROADCAST_INGEST_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: python scripts/post_ingest.py
+
       - name: Commit health status
         if: always()
         continue-on-error: true

@@ -103,6 +103,12 @@ def make_entry(
         "published":    _date_str(article.get("published_at")),
         "collected_at": _iso(_now()),
     }
+    # 要約(ResearchBroadcast_DESIGN.md §5 段階0)。フィードの summary を短く切ったもの。
+    # 無い記事は項目ごと省く(古い行と同じ形で読める = 後方互換)。X投稿は本文を再掲載しないため付けない。
+    summary = article.get("summary")
+    if summary and article.get("source_type") != "x_post":
+        entry["summary"] = summary
+        entry["summary_src"] = "feed"
     if merged_into:
         entry["merged_into"] = merged_into
     return entry

@@ -165,7 +165,10 @@ def run_daily():
 
     cls_by_hash = {
         a["url_hash"]: classify(
-            a.get("title", ""), (a.get("text") or "")[:300], a.get("source_type", "")
+            a.get("title", ""),
+            # X投稿は本文(text)、それ以外はフィードの要約を、分類の手がかりに足す
+            (a.get("text") or a.get("summary") or "")[:300],
+            a.get("source_type", ""),
         )
         for a in new_articles
     }

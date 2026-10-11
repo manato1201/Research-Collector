@@ -93,6 +93,23 @@ def _numbers_differ(norm_a: str, norm_b: str) -> bool:
     return sorted(_NUM_RE.findall(norm_a)) != sorted(_NUM_RE.findall(norm_b))
 
 
+_TRUNC_SUFFIXES = ("...", "…")
+
+
+def comparison_text(item: dict) -> str:
+    """
+    重複判定に使う文字列。通常はタイトルだけ。
+    フィードがタイトルを途中で切っている(末尾が「...」「…」)場合は、要約の先頭を足す。
+    実データ: SideFX の変更履歴はタイトルを40文字で切るため、先頭が同じ別々の変更が同一視されうる。
+    転載同士(ZennとQiitaなど)は要約の書式が違うので、切れていないタイトルには要約を足さない。
+    """
+    title = item.get("title", "") or ""
+    summary = item.get("summary") or ""
+    if summary and title.rstrip().endswith(_TRUNC_SUFFIXES):
+        return f"{title.rstrip().rstrip('.…').rstrip()} {summary[:100]}"
+    return title
+
+
 def _rank(article: dict) -> int:
     return _PLATFORM_RANK.get(article.get("platform", ""), 5)
 
@@ -122,8 +139,9 @@ def group_near_duplicates(
     for r in recent or []:
         if r.get("status") != "added":
             continue
-        f = features(r.get("title", ""))
-        pool.append((f, _norm(f), normalize(r.get("title", "")), r.get("url", "")))
+        text = comparison_text(r)
+        f = features(text)
+        pool.append((f, _norm(f), normalize(text), r.get("url", "")))
 
     # 代表選択を安定させるため、優先順位(公式 > 論文 > 個人記事)→入力順で処理する
     order = sorted(range(len(articles)), key=lambda i: (_rank(articles[i]), i))
@@ -134,9 +152,10 @@ def group_near_duplicates(
 
     for i in order:
         a = articles[i]
-        f = features(a.get("title", ""))
+        text = comparison_text(a)
+        f = features(text)
         n = _norm(f)
-        nt = normalize(a.get("title", ""))
+        nt = normalize(text)
         best_sim, best_url = 0.0, ""
 
         def consider(pf, pn, pnt, purl):
