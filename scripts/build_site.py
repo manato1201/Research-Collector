@@ -111,6 +111,7 @@ def status_info(health: dict) -> dict:
         "new":       daily.get("new"),
         "failed":    daily.get("failed_sources", 0) or 0,
         "failures":  daily.get("source_failures", []) or [],
+        "review":    daily.get("unclassified", 0) or 0,
         "notebooks": daily.get("notebooks_total"),
         "error":     daily.get("error"),
     }
@@ -129,6 +130,8 @@ def status_line_html(st: dict) -> str:
         parts.append(f'<b class="warn">失敗 {esc(st["failed"])}件</b>')
     else:
         parts.append("失敗 <b>0件</b>")
+    if st["review"]:
+        parts.append(f'<b class="warn">要確認 {esc(st["review"])}件</b>')
     if not st["ok"]:
         parts.append(f'<b class="warn">直近の実行はエラー: {esc(st["error"] or "unknown")}</b>')
     return '<span class="status-line">' + " · ".join(parts) + "</span>"
@@ -224,6 +227,7 @@ RESULTS_TEMPLATE = r'''<!DOCTYPE html>
   .chip.review { color: var(--accent3); border-color: var(--accent3); }
   .chip.review[aria-pressed="true"] { background: var(--surface); }
   .chip .n { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .7rem; margin-left: .35rem; opacity: .8; }
+  .chip.review .n.has { opacity: 1; background: var(--accent3); color: var(--bg); border-radius: 999px; padding: 0 .45rem; font-weight: 700; }
   .sort-btn { margin-left: auto; border-color: var(--border); }
   .range-note { font-family: var(--mono); font-size: .7rem; color: var(--text-muted); }
   button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -238,6 +242,8 @@ RESULTS_TEMPLATE = r'''<!DOCTYPE html>
   .title { font-weight: 400; font-size: .95rem; line-height: 1.5; text-decoration: none; overflow-wrap: anywhere;
            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .title:hover { color: var(--accent); text-decoration: underline; }
+  .sum { font-size: .8rem; color: var(--text-muted); margin-top: .15rem; line-height: 1.55;
+         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .sub { font-size: .76rem; color: var(--text-muted); margin-top: .1rem; }
   .sub .flag { color: var(--accent3); font-weight: 400; }
   .row time { font-size: .75rem; color: var(--text-muted); white-space: nowrap; padding-top: .2rem; }
@@ -343,7 +349,9 @@ RESULTS_TEMPLATE = r'''<!DOCTYPE html>
       if (vis) shown++;
     });
     Array.prototype.forEach.call(document.querySelectorAll(".chip"), function (c) {
-      c.querySelector(".n").textContent = counts[c.getAttribute("data-cat")];
+      var cnt = counts[c.getAttribute("data-cat")], nEl = c.querySelector(".n");
+      nEl.textContent = cnt;
+      nEl.classList.toggle("has", cnt > 0);
       c.setAttribute("aria-pressed", state.cat === c.getAttribute("data-cat") ? "true" : "false");
     });
     Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
@@ -405,6 +413,9 @@ def render_row(e: dict) -> str:
         sub.append("類似記事に統合")
     elif status == "failed":
         sub.append('<span class="flag">NotebookLMへの追加に失敗</span>')
+    # 要約(フィードの summary を短く切ったもの。無い記事は行ごと出さない)。出典は上のリンク
+    summary = (e.get("summary") or "").strip()
+    summary_html = f'<div class="sum">{esc(summary)}</div>' if summary else ""
     date = display_date(e)
     mark_title = {"added": "NotebookLMへ追加済み", "failed": "追加に失敗", "merged": "類似記事に統合"}.get(status, "")
     return (
@@ -412,6 +423,7 @@ def render_row(e: dict) -> str:
         f'data-review="{1 if review else 0}" data-status="{esc(status)}">'
         f'<span class="mark" title="{esc(mark_title)}" role="img" aria-label="{esc(mark_title)}"></span>'
         f'<div><a class="title" href="{safe_href(e.get("url", ""))}" title="{esc(e.get("title", ""))}" target="_blank" rel="noopener noreferrer">{esc(e.get("title") or e.get("url", ""))}</a>'
+        f'{summary_html}'
         f'<div class="sub">{" · ".join(sub)}</div></div>'
         f'<time datetime="{esc(date)}">{esc(date)}</time></li>'
     )
@@ -473,7 +485,11 @@ def _replace_between(text: str, start: str, end: str, inner: str) -> tuple[str, 
 
 
 def stat_cell(value, unit: str, label: str) -> str:
-    v = "—" if value is None else esc(value)
+    if value is None:
+        v = "—"
+    else:
+        # data-count: index.html の JS がカウントアップに使う(JS無し・動きを減らす設定なら、書かれた値のまま)
+        v = f'<span class="count" data-count="{esc(value)}">{esc(value)}</span>'
     return (
         f'<div class="hero-stat"><span class="hero-stat-num">{v}<small>{esc(unit)}</small></span>'
         f'<span class="hero-stat-label">{esc(label)}</span></div>'

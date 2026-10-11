@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Research Collector — 松浦真聖</title>
+<script>document.documentElement.classList.add("js");</script>
 <script>try{var t=localStorage.getItem("rc-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t)}catch(e){}</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+JP:wght@300;400;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
@@ -84,9 +85,11 @@
     border-bottom: 1px solid var(--border);
   }
   .nav-logo { font-family: var(--mono); font-size: .75rem; color: var(--accent); letter-spacing: .15em; text-transform: uppercase; }
-  .nav-links { display: flex; gap: 2rem; list-style: none; }
+  .nav-links { display: flex; gap: .3rem; list-style: none; }
   .nav-links a { font-family: var(--mono); font-size: .7rem; color: var(--text-muted); text-decoration: none; letter-spacing: .1em; text-transform: uppercase; transition: color .2s; }
+  .nav-links a { padding: .3rem .8rem; border-radius: 999px; }
   .nav-links a:hover { color: var(--accent2); }
+  .nav-links a[aria-current="true"] { background: var(--surface2); color: var(--text); }
   .hero {
     position: relative;
     min-height: 100vh;
@@ -202,6 +205,8 @@
   .hero-cta-alt:hover { box-shadow: none; background: var(--surface); }
   .hero-scroll { display: inline-block; margin-top: 2rem; font-family: var(--mono); font-size: .7rem; letter-spacing: .1em; color: var(--text-muted); text-decoration: none; }
   .hero-scroll:hover { color: var(--accent); }
+  .js .reveal { opacity: 0; transform: translateY(14px); transition: opacity .6s ease, transform .6s ease; }
+  .js .reveal.is-in { opacity: 1; transform: none; }
   @keyframes fadeInUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
   .hero-content > * { animation: fadeInUp .6s ease both; }
   .hero-content > *:nth-child(1) { animation-delay: .1s; }
@@ -209,7 +214,7 @@
   .hero-content > *:nth-child(3) { animation-delay: .3s; }
   .hero-content > *:nth-child(4) { animation-delay: .4s; }
   .hero-content > *:nth-child(5) { animation-delay: .5s; }
-  @media (prefers-reduced-motion: reduce) { .hero-content > * { animation: none; } html { scroll-behavior: auto; } * { transition: none !important; } }
+  @media (prefers-reduced-motion: reduce) { .hero-content > * { animation: none; } html { scroll-behavior: auto; } * { transition: none !important; } .js .reveal { opacity: 1; transform: none; } }
   @media (max-width: 900px) {
     .overview-grid { grid-template-columns: repeat(2, 1fr); }
   }
@@ -252,7 +257,7 @@
     <div class="hero-tag">Research Collector · Personal Dev Tool</div>
     <h1>毎日、勝手に<span>集まる</span>技術情報</h1>
     <p class="hero-sub">GitHub Actions × NotebookLM による技術情報自動収集システム。Zenn・Qiita・Unity/UE・CEDEC・学術論文・各種変更履歴を自動で集め、AIによる知識ベースを継続的に構築する。</p>
-    <div class="hero-stats"><!--SITE_STATS_START--><div class="hero-stat"><span class="hero-stat-num">22<small>件</small></span><span class="hero-stat-label">収集元(フィード・API)</span></div><div class="hero-stat"><span class="hero-stat-num">35<small>件</small></span><span class="hero-stat-label">今週の収集数</span></div><div class="hero-stat"><span class="hero-stat-num">81<small>冊</small></span><span class="hero-stat-label">NotebookLM ノートブック</span></div><!--SITE_STATS_END--></div>
+    <div class="hero-stats"><!--SITE_STATS_START--><div class="hero-stat"><span class="hero-stat-num"><span class="count" data-count="22">22</span><small>件</small></span><span class="hero-stat-label">収集元(フィード・API)</span></div><div class="hero-stat"><span class="hero-stat-num"><span class="count" data-count="35">35</span><small>件</small></span><span class="hero-stat-label">今週の収集数</span></div><div class="hero-stat"><span class="hero-stat-num"><span class="count" data-count="81">81</span><small>冊</small></span><span class="hero-stat-label">NotebookLM ノートブック</span></div><!--SITE_STATS_END--></div>
     <div class="hero-meta">
       <div class="hero-badge">Python 3.11</div>
       <div class="hero-badge">GitHub Actions</div>
@@ -521,6 +526,62 @@
 </footer>
 
 <script>
+/* 動きは3つ(カウントアップ・スクロールスパイ・フェードイン)。1画面で同時に動くのは2種類まで:
+   トップ=ページ読み込みのフェード+カウントアップ / 説明部分=スパイ+フェードイン。
+   すべて prefers-reduced-motion で止める(カウントアップは最終値を最初から表示)。 */
+(function () {
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // カウントアップ(08): 入口の数値。生成された値(data-count)まで1回だけ
+  if (!reduce) {
+    Array.prototype.forEach.call(document.querySelectorAll(".count"), function (el) {
+      var target = Number(el.getAttribute("data-count"));
+      if (!isFinite(target) || target <= 0) return;
+      var start = null, dur = 900;
+      el.textContent = "0";
+      function tick(ts) {
+        if (start === null) start = ts;
+        var p = Math.min(1, (ts - start) / dur);
+        el.textContent = String(Math.round(target * (1 - Math.pow(1 - p, 3))));
+        if (p < 1) requestAnimationFrame(tick); else el.textContent = String(target);
+      }
+      requestAnimationFrame(tick);
+    });
+  }
+
+  // スクロールスパイ(24) + スティッキー(17: ナビは固定済み): 今いるセクションのリンクだけをピルにする
+  var links = {};
+  Array.prototype.forEach.call(document.querySelectorAll('.nav-links a[href^="#"]'), function (a) {
+    links[a.getAttribute("href").slice(1)] = a;
+  });
+  var sections = Array.prototype.slice.call(document.querySelectorAll("section[id]"));
+  if ("IntersectionObserver" in window && sections.length) {
+    var spy = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (!en.isIntersecting) return;
+        Object.keys(links).forEach(function (id) { links[id].removeAttribute("aria-current"); });
+        var a = links[en.target.id];
+        if (a) a.setAttribute("aria-current", "true");
+      });
+    }, { rootMargin: "-35% 0px -60% 0px" });
+    sections.forEach(function (s) { spy.observe(s); });
+  }
+
+  // フェードイン(01): 構成図を、見えたときに1回だけ
+  var targets = Array.prototype.slice.call(document.querySelectorAll(".diagram-wrap, .table-scroll"));
+  targets.forEach(function (t) { t.classList.add("reveal"); });
+  if (reduce || !("IntersectionObserver" in window)) {
+    targets.forEach(function (t) { t.classList.add("is-in"); });
+  } else {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add("is-in"); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.12 });
+    targets.forEach(function (t) { io.observe(t); });
+  }
+})();
+
 document.getElementById("theme-btn").addEventListener("click", function () {
   var root = document.documentElement, cur = root.getAttribute("data-theme");
   if (!cur) cur = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
