@@ -702,8 +702,8 @@ flowchart TB
 | U3 | 決めごと表と、日付・件数の等幅数字 | 本章 12.10 | 実装済み |
 | U4 | ライト/ダークのテーマ | `index.html`、`results.html`、`LECTURE.html` | 実装済み |
 | 追補 | UIパーツ・Motion(バッジ・カウントアップ・スクロールスパイ・フェードイン) | `index.html`、`results.html` | 実装済み(12.11) |
-| RB | ResearchBroadcast との接続(要約の保存・取り込みの送信・受け口のWorker) | `collectors/_text.py`、`scripts/post_ingest.py`、`broadcast/` | 実装済み・ローカルで検証。デプロイは未実施(12.12) |
-| RB2 | ResearchBroadcast Phase 2(episode・サイト・ボード・ログイン。無料プラン構成) | `nbklm/episodes.py`、`broadcast/public/`、`broadcast/src/` | 実装済み・ローカルと実ブラウザで検証。デプロイは未実施(12.13) |
+| RB | ResearchBroadcast との接続(要約の保存・取り込みの送信・受け口のWorker) | `collectors/_text.py`、`scripts/post_ingest.py`、`broadcast/` | 実装済み・ローカルで検証。2026-10-11 にデプロイ済み(12.12・12.13) |
+| RB2 | ResearchBroadcast Phase 2(episode・サイト・ボード・ログイン。無料プラン構成) | `nbklm/episodes.py`、`broadcast/public/`、`broadcast/src/` | 実装済み・ローカルと実ブラウザで検証。2026-10-11 にデプロイし、本番でも確認(12.13) |
 
 ```mermaid
 flowchart TB
@@ -898,14 +898,14 @@ flowchart LR
 | 日次ワークフロー | 「Send new articles to ResearchBroadcast (optional)」を追加。`continue-on-error` で、失敗しても収集には影響しない |
 
 **確認したこと**: `wrangler dev --local`(workerd + ローカルのD1)に、実際の `articles_log.json`(35件)を実クライアントから送り、受け付け・再送で増えないこと・カテゴリ別の絞り込み(複数カテゴリの記事は両方に出て、全体の件数はURL単位)・認証(トークン無し/違い → 401)・本文サイズ上限(413)・範囲外カテゴリの拒否(422)・X投稿の要約を保存しないこと、を26項目で確認した。
-**確認していないこと**: Cloudflare へのデプロイ(アカウントの作業)。設計の Phase 0(Containers で VOICEVOX、Workflows、Workers AI の要約)と Phase 2 以降(episode・サイト・音声・動画・Access・Slack通知)は、有料プランでの測定が先に必要なため未着手。
+**デプロイ**: 2026-10-11 に済み(12.13)。**確認していないこと**: 設計の Phase 0(Containers で VOICEVOX、Workflows、Workers AI の要約)と Phase 2 以降(episode・サイト・音声・動画・Access・Slack通知)は、有料プランでの測定が先に必要なため未着手。
 
 > **隔離方針との関係**: ローカル限定の分野は、`articles_log.json` に書かれない(11章)ため、そもそも送信対象にならない。それでも混ざった場合に備え、送信側(`post_ingest.py`)と受け口(Worker)の**両方**で、3カテゴリ以外を拒否している。
 
 > **12章全体の確認済みの範囲**:
 > - **本番(GitHub Actions)**: 2026-10-10 の日次実行で、取得96件・新規2件・失敗0件・ノートブック81冊、`articles_log.json` 35件(追加32・統合3)を確認した。統合された3件は、ZennとQiitaの転載1組と、SideFXが別IDで再掲した同一内容2件で、いずれも正しい統合だった。
 > - **ローカル**: 要約・ResearchBroadcast の送信と受け口は、`wrangler dev --local` で通しの動作を確認した(12.12)。UIは実ブラウザで確認した(12.11)。
-> - **未確認**: NotebookLM のテキストソース追加(X投稿用。`scripts/check_text_source.py` で確認する)、Cloudflare へのデプロイ。
+> - **未確認**: NotebookLM のテキストソース追加(X投稿用。`scripts/check_text_source.py` で確認する)。
 > - **12.13(Phase 2)**: episode の生成(Python)・取り込み・ボード・ログイン・サイトは、`wrangler dev --local` と実ブラウザで確認した。Cloudflare 上での実動作(Free の CPU 時間・D1 のバッチ)は未確認。
 > **既存のまま残っていること**: `LECTURE.html` はスマホ幅で横にはみ出す(今回の変更前から同じ)。対象はテーマの追加のみ。
 
@@ -936,7 +936,8 @@ flowchart LR
 **デザインの決めごと**(12.10 を踏襲): 紫=主操作・選択中 / シアン=新着 / 橙=注意(失敗・要確認)。カテゴリは「固定色の丸 + 文字」。日付・数字は等幅。動きはカウントアップとフェードインの2種類で、`prefers-reduced-motion` では止める。
 
 **確認したこと**: `wrangler dev --local` で、実際の記事ログと実クライアントによる結合テスト(62項目: 認証・冪等・episode・ボード・ログイン・CSRF・範囲外カテゴリの拒否・SPA の配信と CSP ヘッダ)。実ブラウザ(Chromium)で、ログインの往復・3レーン・ドロワー(Esc・フォーカス)・ボードのリロード後の保持・カテゴリの期間と収集元の絞り込み・週次の図・状態・テーマ・幅390pxで横にはみ出さないこと・動きの軽減・ログアウト後に API が閉じること・CSP 違反が無いこと。単体テストは Python 54 + Worker 21。
-**確認していないこと**: Cloudflare 上での実動作(Free の Worker の CPU 時間 10ms・D1 のバッチの上限)。スマホ実機のタッチ操作。日本語音声が入っていない端末での読み上げ。Access による保護。音声ファイル・動画・Slack通知(未実装)。
+**本番(Cloudflare)で確認したこと**: 2026-10-11 にデプロイし、未ログインの API が 401 / 実クライアントの取り込み(記事40件 + episode 8件が成功。再送で増えない)/ パスワードのログインと Cookie の属性 / 異なる Origin からのボード書き込みの拒否 / 実ブラウザでのサイト操作。
+**確認していないこと**: Free の Worker の CPU 時間 10ms に収まっているか(エラーは出なかったが、時間そのものと契約のプランは未確認。`wrangler tail` で例外を数日見る)・D1 のバッチの上限(件数が増えた日)・Actions の定期実行からの初回の送信。スマホ実機のタッチ操作。日本語音声が入っていない端末での読み上げ。Access による保護。音声ファイル・動画・Slack通知(未実装)。
 
 > **隔離方針との関係**: episode の生成・サイト・D1 のいずれも、3カテゴリ以外(ローカル限定の分野)を扱わない。`articles_log.json` に無いので生成元に入らず、`validateEpisode` も3カテゴリ以外を拒否する。
 

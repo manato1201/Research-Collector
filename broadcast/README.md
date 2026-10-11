@@ -12,7 +12,7 @@
 | ログイン(パスワード → 署名つきCookie)`/api/login`                  | 実装・ローカルで検証済み                                  |
 | サイト(今日の放送・カテゴリ・ボード・週次特集・状態)               | 実装。実ブラウザ(Chromium)で確認済み                      |
 | D1 スキーマ(`migrations/0001_init.sql`・`0002_episodes_board.sql`) | 実装・ローカルD1で適用確認                                |
-| **Cloudflare へのデプロイ**                                        | **未実施**(下記「デプロイ」。CLI だけで行える)            |
+| **Cloudflare へのデプロイ**                                        | **済み**(2026-10-11。CLI だけで実施。下記「デプロイ」)    |
 | 音声ファイル・動画・Slack通知・Access                              | 未実装(無料プランの範囲外、または後続。下記「設計との差分」) |
 
 ---
@@ -147,9 +147,11 @@ python scripts/post_ingest.py --since-hours 100000
 
 ---
 
-## デプロイ(アカウントの作業。まだ行っていない)
+## デプロイ
 
-CLI だけで行える(ダッシュボード操作は不要)。`wrangler login` は一度ブラウザで許可する。
+**2026-10-11 に実施済み**(Worker `research-broadcast` + D1 `research-broadcast`(APAC)。`wrangler.jsonc` の `database_id` は反映済み)。
+以下は、最初に行った手順と、作り直すときの手順。CLI だけで行える(ダッシュボード操作は不要)。`wrangler login` は一度ブラウザで許可する。
+コードを更新したときは `npx wrangler deploy` だけでよい(migration を足したときは先に `npx wrangler d1 migrations apply DB --remote`)。
 
 ```bash
 cd broadcast
@@ -178,8 +180,9 @@ gh secret set BROADCAST_INGEST_TOKEN   # INGEST_TOKEN と同じ値
 
 ## 未確認
 
-- **Cloudflare 上での実動作**: ここまでの検証は `wrangler dev --local`(workerd + ローカルのD1)と実ブラウザまで。
-- **Free プランでの CPU 時間**: Free は Worker の CPU 時間が 10ms。100件の upsert・episode の取り込みが収まるかは未測定。収まらなければ Paid(月5ドル)にするか、1回あたりの件数(`post_ingest.py` の `BATCH_SIZE`)を下げる。
-- **D1 の1回のバッチの上限**: 50文ずつに分けて実行している。実環境での上限は未確認。
+- **本番での確認(2026-10-11)**: 認証(未ログインは 401)・実クライアントによる取り込み(記事40件 + episode 8件が1バッチで成功。約2.5秒)・再送で増えないこと・パスワードのログインと Cookie の属性(Secure・HttpOnly・SameSite=Strict)・Origin の異なる書き込みの拒否・実ブラウザでのサイト操作を確認した。
+- **Free プランでの CPU 時間**: Free は Worker の CPU 時間が 10ms。上記の取り込みはエラーなく成功したが、CPU 時間そのものは測っておらず、アカウントのプランも確認していない。`wrangler tail` で例外(1102)が出ていないかを、数日の運用で見ること。出るようなら `post_ingest.py` の `BATCH_SIZE` を下げるか、Paid(月5ドル)にする。
+- **D1 の1回のバッチの上限**: 50文ずつに分けて実行している。本番の取り込みは成功した(今回は40件)。件数が増えた日の挙動は未確認。
+- **Actions からの送信**: GitHub Secrets は登録済みだが、定期実行(日次ワークフロー)からの初回の送信は、次回の実行で確認する。
 - **読み上げの声**: 端末・ブラウザ次第。日本語の音声が入っていない端末では読み上げられない(ボタンは出るが無音になる場合がある)。
 - **スマホ実機**: 幅 390px の描画でしか確認していない(実機のタッチ操作は未確認)。
