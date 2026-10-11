@@ -703,6 +703,7 @@ flowchart TB
 | U4 | ライト/ダークのテーマ | `index.html`、`results.html`、`LECTURE.html` | 実装済み |
 | 追補 | UIパーツ・Motion(バッジ・カウントアップ・スクロールスパイ・フェードイン) | `index.html`、`results.html` | 実装済み(12.11) |
 | RB | ResearchBroadcast との接続(要約の保存・取り込みの送信・受け口のWorker) | `collectors/_text.py`、`scripts/post_ingest.py`、`broadcast/` | 実装済み・ローカルで検証。デプロイは未実施(12.12) |
+| RB2 | ResearchBroadcast Phase 2(episode・サイト・ボード・ログイン。無料プラン構成) | `nbklm/episodes.py`、`broadcast/public/`、`broadcast/src/` | 実装済み・ローカルと実ブラウザで検証。デプロイは未実施(12.13) |
 
 ```mermaid
 flowchart TB
@@ -905,7 +906,39 @@ flowchart LR
 > - **本番(GitHub Actions)**: 2026-10-10 の日次実行で、取得96件・新規2件・失敗0件・ノートブック81冊、`articles_log.json` 35件(追加32・統合3)を確認した。統合された3件は、ZennとQiitaの転載1組と、SideFXが別IDで再掲した同一内容2件で、いずれも正しい統合だった。
 > - **ローカル**: 要約・ResearchBroadcast の送信と受け口は、`wrangler dev --local` で通しの動作を確認した(12.12)。UIは実ブラウザで確認した(12.11)。
 > - **未確認**: NotebookLM のテキストソース追加(X投稿用。`scripts/check_text_source.py` で確認する)、Cloudflare へのデプロイ。
+> - **12.13(Phase 2)**: episode の生成(Python)・取り込み・ボード・ログイン・サイトは、`wrangler dev --local` と実ブラウザで確認した。Cloudflare 上での実動作(Free の CPU 時間・D1 のバッチ)は未確認。
 > **既存のまま残っていること**: `LECTURE.html` はスマホ幅で横にはみ出す(今回の変更前から同じ)。対象はテーマの追加のみ。
+
+### 12.13 ResearchBroadcast Phase 2: episode・サイト・ボード(2026-10-11)
+
+12.12 の受け口に、**無料プランだけで動く**出力側を足した。設計(`ResearchBroadcast_DESIGN.md`)が前提にしていた有料機能(Workflows・R2・Containers・Workers AI)は使わない。
+
+```mermaid
+flowchart LR
+    L["articles_log.json"] --> E["nbklm/episodes.py<br/>日次・週次の episode を生成<br/>(Actions 上。規則ベース)"]
+    E --> P["scripts/post_ingest.py<br/>記事 + episode + 失敗した収集元"]
+    P -- "POST /api/ingest (Bearer)" --> W["Worker + D1<br/>articles / episodes / board / meta"]
+    W --> S["サイト(静的アセット)<br/>放送・カテゴリ・ボード・特集・状態"]
+    B["ブラウザ<br/>パスワードでログイン → Cookie"] --> S
+```
+
+| 項目 | 内容 |
+|---|---|
+| episode の生成 | `nbklm/episodes.py`。日次は、その日(JST)の記事から「全体」と「カテゴリ別3本」。週次は ISO 週の「全体」(日別の件数・カテゴリ別の章・注目)。id は `種別:日付:カテゴリ` で、同じ入力から同じ episode ができる(再送しても重複しない)。件数0の episode は作らない。実行のたびに今日・昨日の日次と今週・先週の週次を作り直す |
+| 件数の数え方 | 全体の件数は **URL単位**。複数カテゴリの記事は両方のレーンに出し(「ほかのカテゴリにも」バッジ)、カテゴリ別の件数の合計は全体を超えうる |
+| 送信 | `post_ingest.py` が、記事に加えて `episodes` と `failures`(取得に失敗した収集元。20件まで)を最初のバッチに載せる。受け口の契約は `broadcast/README.md` |
+| サイト | `broadcast/public/`(依存なしの SPA)。`/` 今日の放送 / `/c/<カテゴリ>` / `/board` / `/weekly` / `/status` / `/login`。HTML 文字列を組み立てず、リンクは http(s) だけ。CSP は `_headers` |
+| ボード | 記事のドロワーから「読む / 試す / 保留 / 未読」とメモ(200字)。D1 の `board`。書き込みは Cookie のとき Origin も検査する |
+| 認証 | 機械は Bearer(`INGEST_TOKEN`)、人は `VIEW_PASSWORD` でログインして署名つき Cookie(HttpOnly・SameSite=Strict・Secure・30日)。取り込みは Bearer のみ |
+| 読み上げ | ブラウザの `speechSynthesis`(無料。声は端末による)。音声ファイルは作らない |
+| 状態の見える化 | 最終更新の相対時刻と、20時間以上取り込みが無いときの「止まっている可能性」バッジ。失敗した収集元の一覧 |
+
+**デザインの決めごと**(12.10 を踏襲): 紫=主操作・選択中 / シアン=新着 / 橙=注意(失敗・要確認)。カテゴリは「固定色の丸 + 文字」。日付・数字は等幅。動きはカウントアップとフェードインの2種類で、`prefers-reduced-motion` では止める。
+
+**確認したこと**: `wrangler dev --local` で、実際の記事ログと実クライアントによる結合テスト(62項目: 認証・冪等・episode・ボード・ログイン・CSRF・範囲外カテゴリの拒否・SPA の配信と CSP ヘッダ)。実ブラウザ(Chromium)で、ログインの往復・3レーン・ドロワー(Esc・フォーカス)・ボードのリロード後の保持・カテゴリの期間と収集元の絞り込み・週次の図・状態・テーマ・幅390pxで横にはみ出さないこと・動きの軽減・ログアウト後に API が閉じること・CSP 違反が無いこと。単体テストは Python 54 + Worker 21。
+**確認していないこと**: Cloudflare 上での実動作(Free の Worker の CPU 時間 10ms・D1 のバッチの上限)。スマホ実機のタッチ操作。日本語音声が入っていない端末での読み上げ。Access による保護。音声ファイル・動画・Slack通知(未実装)。
+
+> **隔離方針との関係**: episode の生成・サイト・D1 のいずれも、3カテゴリ以外(ローカル限定の分野)を扱わない。`articles_log.json` に無いので生成元に入らず、`validateEpisode` も3カテゴリ以外を拒否する。
 
 ---
 

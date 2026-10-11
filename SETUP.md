@@ -123,7 +123,7 @@ Secretへ自動的に書き戻す。これには **Secrets書き込み権限を�
 | 新着監視の対象を増やす | `collectors/watch_collector.py` の `WATCHES` に追加。通知のみで、導入はされない |
 | 収集結果を見る | `results.html` をブラウザで開く。日次・週次の実行のたびに自動更新される(GitHub Pages等で公開するかは自分で決める) |
 | 分類のキーワードを調整する | `nbklm/classifier.py`。精度は `agreement_report()` で自分のデータから測れる |
-| 収集した記事を ResearchBroadcast(`broadcast/`)へ送る | GitHub の Secrets に `BROADCAST_INGEST_URL`(`https://…/api/ingest`)と `BROADCAST_INGEST_TOKEN` を登録する。**登録するまでは、送信ステップは何もしない**。受け口のデプロイ手順は `broadcast/README.md`。Cloudflare Access のサービス認証を使う場合は `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` も |
+| 収集した記事を ResearchBroadcast(`broadcast/`)へ送る | GitHub の Secrets に `BROADCAST_INGEST_URL`(`https://…/api/ingest`)と `BROADCAST_INGEST_TOKEN` を登録する。**登録するまでは、送信ステップは何もしない**。受け口のデプロイ手順(CLI だけで行える。`INGEST_TOKEN` と、サイトのログイン用 `VIEW_PASSWORD` の2つを `wrangler secret put` で登録する)は `broadcast/README.md`。Cloudflare Access のサービス認証を使う場合は `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` も |
 | テストを実行する | `python -m unittest discover tests`(ネットワーク不要) / `cd broadcast && npm test` |
 
 `articles_log.json` / `watch_state.json` / `results.html` はGitHub Actionsが自動でコミットする(初回の実行後に現れる)。
