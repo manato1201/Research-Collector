@@ -1,0 +1,32 @@
+{
+  // ResearchBroadcast Phase 1(取り込みと記事API)。ResearchBroadcast_DESIGN.md §3・§9 参照。
+  // 秘密情報(INGEST_TOKEN)はここに書かない: `wrangler secret put INGEST_TOKEN`(ローカルは .dev.vars)
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "research-broadcast",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": ["nodejs_compat"],
+
+  "vars": {
+    // "false" にすると GET /api/* をトークン無しで読める。Cloudflare Access が、このWorkerの
+    // 全ホスト名(workers.dev を含む)を保護していると確認できたときだけ変更すること。
+    "READ_REQUIRES_TOKEN": "true",
+    // 記事の保持日数(設計 §4.3。articles_log.json と同じ90日)
+    "RETENTION_DAYS": "90"
+  },
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "research-broadcast",
+      // `wrangler d1 create research-broadcast` の出力のIDに置き換える(デプロイ時のみ必要。ローカル開発は不要)
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "./migrations"
+    }
+  ],
+
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 }
+  }
+}
