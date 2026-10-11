@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Research Broadcast</title>
+<script src="/theme-init.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+JP:wght@300;400;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#view">本文へ移動</a>
+
+<header class="top">
+  <div class="top-inner">
+    <a class="brand" href="/" data-link>Research Broadcast</a>
+    <nav class="tabs-nav" aria-label="メイン">
+      <a href="/" data-link data-nav="home">放送</a>
+      <a href="/board" data-link data-nav="board">ボード</a>
+      <a href="/weekly" data-link data-nav="weekly">特集</a>
+      <a href="/status" data-link data-nav="status">状態</a>
+    </nav>
+    <div class="top-actions">
+      <button class="icon-btn" id="theme-btn" type="button" aria-label="テーマを切り替える">テーマ</button>
+      <button class="icon-btn" id="logout-btn" type="button" hidden>ログアウト</button>
+    </div>
+  </div>
+  <div class="status-bar" id="status-bar" role="status" aria-live="polite"></div>
+</header>
+
+<main id="view" tabindex="-1"></main>
+
+<footer class="foot">
+  <p>分類は記事のタイトルや要約から自動で付けたヒントで、確定ではありません。要約は配信元のフィードの一部で、本文の転載ではありません。</p>
+  <p>読み上げは、お使いのブラウザ・端末の音声です(声は端末により異なります)。</p>
+</footer>
+
+<div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <div class="drawer-head">
+    <h2 id="drawer-title"></h2>
+    <button class="icon-btn" id="drawer-close" type="button" aria-label="閉じる">閉じる</button>
+  </div>
+  <div class="drawer-body" id="drawer-body"></div>
+</aside>
+
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
+<script type="module" src="/app.js"></script>
+<noscript><p style="padding:2rem">このページの表示には JavaScript が必要です。</p></noscript>
+</body>
+</html>

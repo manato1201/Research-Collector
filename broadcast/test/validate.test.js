@@ -78,7 +78,7 @@ test("field limits", () => {
 
 test("ingest: unsupported schema, empty and oversized batches", () => {
   assert.equal(validateIngest({ schema: 2, articles: [good()] }).error, "unsupported_schema");
-  assert.equal(validateIngest({ schema: 1, articles: [] }).error, "articles_is_empty");
+  assert.equal(validateIngest({ schema: 1, articles: [] }).error, "nothing_to_ingest");
   const big = Array.from({ length: 201 }, () => good());
   const r = validateIngest({ schema: 1, articles: big });
   assert.equal(r.status, 413);
@@ -107,4 +107,84 @@ test("article query: filters and limits", () => {
   assert.equal(buildArticleQuery(new URLSearchParams("since=yesterday")).error, "bad_since");
   // SQL インジェクション様の入力は、許可リスト・形式の検査で弾かれる(値は常に束縛される)
   assert.equal(buildArticleQuery(new URLSearchParams("category=' OR 1=1 --")).error, "bad_category");
+});
+
+// ------------------------------------------------------------------ Phase 2: episode / failures / ボード
+import { buildEpisodeQuery, isUrlHash, validateBoardInput, validateEpisode } from "../src/validate.js";
+
+const episode = () => ({
+  id: "daily:2026-10-11:game_dev_tech",
+  kind: "daily",
+  date: "2026-10-11",
+  category: "game_dev_tech",
+  headline: "Game-Dev-Tech: 新着2件",
+  data: { count: 2, items: [{ title: "t", url: "https://example.com/1" }] },
+});
+
+test("episode: valid daily and weekly episodes are accepted", () => {
+  const r = validateEpisode(episode());
+  assert.equal(r.ok, true);
+  assert.equal(r.value.category, "game_dev_tech");
+  assert.equal(typeof r.value.json, "string");
+
+  const all = { id: "daily:2026-10-11:all", kind: "daily", date: "2026-10-11", category: null, headline: "h", data: {} };
+  assert.equal(validateEpisode(all).value.category, null);
+  const w = { id: "weekly:2026-W41:all", kind: "weekly", date: "2026-W41", category: null, headline: "h", data: {} };
+  assert.equal(validateEpisode(w).ok, true);
+});
+
+test("episode: id must agree with kind/date/category (idempotency key)", () => {
+  assert.equal(validateEpisode({ ...episode(), kind: "weekly" }).error, "kind_mismatch");
+  assert.equal(validateEpisode({ ...episode(), date: "2026-10-12" }).error, "date_mismatch");
+  assert.equal(validateEpisode({ ...episode(), category: "graphics_research" }).error, "category_mismatch");
+  assert.equal(validateEpisode({ ...episode(), id: "daily:2026-10-11:botany" }).error, "bad_episode_id");
+  assert.equal(validateEpisode({ ...episode(), id: "x" }).error, "bad_episode_id");
+});
+
+test("episode: size and shape limits", () => {
+  assert.equal(validateEpisode({ ...episode(), data: [] }).error, "bad_data");
+  assert.equal(validateEpisode({ ...episode(), headline: "" }).error, "bad_headline");
+  const huge = { ...episode(), data: { blob: "x".repeat(210_000) } };
+  assert.equal(validateEpisode(huge).error, "data_too_large");
+});
+
+test("ingest: episodes only (no articles) is accepted; empty body is not", () => {
+  const ok = validateIngest({ schema: 1, articles: [], episodes: [episode()] });
+  assert.equal(ok.ok, true);
+  assert.equal(ok.episodes.length, 1);
+  assert.equal(validateIngest({ schema: 1 }).error, "nothing_to_ingest");
+  assert.equal(validateIngest({ schema: 1, articles: [], failures: [] }).ok, true);
+});
+
+test("ingest: invalid episodes are rejected individually; failures are trimmed", () => {
+  const r = validateIngest({
+    schema: 1,
+    articles: [],
+    episodes: [episode(), { id: "bad" }],
+    failures: [{ source: "https://x/feed", error: "HTTP 404" }, { nope: 1 }, { source: "s".repeat(500) }],
+  });
+  assert.equal(r.episodes.length, 1);
+  assert.deepEqual(r.rejectedEpisodes, [{ index: 1, error: "bad_episode_id" }]);
+  assert.deepEqual(r.failures, [{ source: "https://x/feed", error: "HTTP 404" }]);
+  const tooMany = validateIngest({ schema: 1, episodes: Array.from({ length: 21 }, episode) });
+  assert.equal(tooMany.status, 413);
+});
+
+test("board: only known states; unread clears; note length", () => {
+  assert.deepEqual(validateBoardInput({ state: "try" }), { ok: true, state: "try", note: "" });
+  assert.equal(validateBoardInput({ state: "unread" }).ok, true);
+  assert.equal(validateBoardInput({ state: "done" }).error, "bad_state");
+  assert.equal(validateBoardInput({ state: "try", note: "x".repeat(201) }).error, "bad_note");
+  assert.equal(validateBoardInput([]).error, "body_must_be_an_object");
+  assert.equal(isUrlHash("0123456789abcdef"), true);
+  assert.equal(isUrlHash("../../etc/passwd"), false);
+});
+
+test("episode query", () => {
+  const q = buildEpisodeQuery(new URLSearchParams("kind=weekly&date=2026-W41&category=all"));
+  assert.deepEqual(q, { ok: true, kind: "weekly", date: "2026-W41", category: "all" });
+  assert.equal(buildEpisodeQuery(new URLSearchParams("")).date, "latest");
+  assert.equal(buildEpisodeQuery(new URLSearchParams("kind=monthly")).error, "bad_kind");
+  assert.equal(buildEpisodeQuery(new URLSearchParams("date=tomorrow")).error, "bad_date");
+  assert.equal(buildEpisodeQuery(new URLSearchParams("category=nope")).error, "bad_category");
 });
