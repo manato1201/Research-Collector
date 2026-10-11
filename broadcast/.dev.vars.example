@@ -1,2 +1,5 @@
 # ローカル開発用。コピーして .dev.vars にする(.dev.vars はコミットしない)
+# 機械(GitHub Actions)用: 取り込みの Bearer トークン
 INGEST_TOKEN=change-me-to-a-long-random-string
+# 人(ブラウザ)用: サイトのログインパスワード。長いものにする
+VIEW_PASSWORD=change-me-to-a-long-password

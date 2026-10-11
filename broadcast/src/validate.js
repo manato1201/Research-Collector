@@ -13,6 +13,8 @@ export const STATUSES = ["added", "failed", "merged"];
 
 export const MAX_BODY_BYTES = 1_000_000;
 export const MAX_ARTICLES = 200;
+export const MAX_EPISODES = 20;
+export const MAX_EPISODE_BYTES = 200_000;
 
 const HASH_RE = /^[0-9a-f]{16}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,17 +119,30 @@ export function validateIngest(body) {
     return { ok: false, status: 400, error: "body_must_be_an_object" };
   if (body.schema !== SCHEMA_VERSION)
     return { ok: false, status: 400, error: "unsupported_schema" };
-  if (!Array.isArray(body.articles))
+  // articles は省略・空でもよい(episode と失敗の状態だけを送る場合)。ただし何も無い取り込みは受け付けない
+  const articles = body.articles ?? [];
+  if (!Array.isArray(articles))
     return { ok: false, status: 400, error: "articles_must_be_an_array" };
-  if (body.articles.length === 0)
-    return { ok: false, status: 400, error: "articles_is_empty" };
-  if (body.articles.length > MAX_ARTICLES)
+  if (articles.length > MAX_ARTICLES)
     return { ok: false, status: 413, error: "too_many_articles" };
+
+  const episodesIn = body.episodes ?? [];
+  if (!Array.isArray(episodesIn))
+    return { ok: false, status: 400, error: "episodes_must_be_an_array" };
+  if (episodesIn.length > MAX_EPISODES)
+    return { ok: false, status: 413, error: "too_many_episodes" };
+
+  const failuresIn = body.failures ?? null;
+  if (failuresIn !== null && !Array.isArray(failuresIn))
+    return { ok: false, status: 400, error: "failures_must_be_an_array" };
+
+  if (articles.length === 0 && episodesIn.length === 0 && failuresIn === null)
+    return { ok: false, status: 400, error: "nothing_to_ingest" };
 
   const accepted = [];
   const rejected = [];
   const seen = new Set();
-  body.articles.forEach((raw, index) => {
+  articles.forEach((raw, index) => {
     const r = validateArticle(raw);
     if (!r.ok) {
       rejected.push({ index, error: r.error });
@@ -150,7 +165,24 @@ export function validateIngest(body) {
         run[k] = v;
     }
   }
-  return { ok: true, accepted, rejected, run };
+  const episodes = [];
+  const rejectedEpisodes = [];
+  episodesIn.forEach((raw, index) => {
+    const r = validateEpisode(raw);
+    if (r.ok) episodes.push(r.value);
+    else rejectedEpisodes.push({ index, error: r.error });
+  });
+
+  // failures: 直近の実行で取得に失敗した収集元(/status の表示用)。null = 送られていない(前回の値を残す)
+  const failures =
+    failuresIn === null
+      ? null
+      : failuresIn
+          .filter((f) => f && typeof f === "object" && isStr(f.source, 1, 120))
+          .slice(0, 20)
+          .map((f) => ({ source: f.source, error: isStr(f.error, 0, 200) ? f.error : "" }));
+
+  return { ok: true, accepted, rejected, run, episodes, rejectedEpisodes, failures };
 }
 
 /**
@@ -202,4 +234,68 @@ export function buildArticleQuery(searchParams) {
     limit,
     offset,
   };
+}
+
+// ------------------------------------------------------------------ episode(番組表)
+
+const EPISODE_ID_RE = /^(daily|weekly):([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-W[0-9]{2}):(all|game_dev_tech|graphics_research|software_engineering)$/;
+
+/**
+ * episode 1件の検証。id は `種別:日付:カテゴリ`(日次は YYYY-MM-DD、週次は YYYY-Www)で、
+ * kind / date / category は id と一致していなければならない(同じ入力から同じ id = 冪等)。
+ * data の中身(記事の項目)は、サイト側が textContent / http(s) のリンクでしか使わない前提で、形だけ確認する。
+ * @returns {{ok: true, value: object} | {ok: false, error: string}}
+ */
+export function validateEpisode(e) {
+  if (e === null || typeof e !== "object" || Array.isArray(e)) return { ok: false, error: "not_an_object" };
+  const m = typeof e.id === "string" ? EPISODE_ID_RE.exec(e.id) : null;
+  if (!m) return { ok: false, error: "bad_episode_id" };
+  const [, kind, date, cat] = m;
+
+  if (e.kind !== kind) return { ok: false, error: "kind_mismatch" };
+  if (e.date !== date) return { ok: false, error: "date_mismatch" };
+  const category = cat === "all" ? null : cat;
+  if ((e.category ?? null) !== category) return { ok: false, error: "category_mismatch" };
+  if (kind === "daily" && !DATE_RE.test(date)) return { ok: false, error: "bad_date" };
+  if (kind === "weekly" && !/^\d{4}-W\d{2}$/.test(date)) return { ok: false, error: "bad_date" };
+
+  if (!isStr(e.headline, 1, 300)) return { ok: false, error: "bad_headline" };
+  if (e.data === null || typeof e.data !== "object" || Array.isArray(e.data)) return { ok: false, error: "bad_data" };
+  const json = JSON.stringify(e.data);
+  if (json.length > MAX_EPISODE_BYTES) return { ok: false, error: "data_too_large" };
+
+  return { ok: true, value: { id: e.id, kind, date, category, headline: e.headline, json } };
+}
+
+// ------------------------------------------------------------------ ボード
+
+// 未読 は「行が無い」状態。reading=読む / try=試す / hold=保留
+export const BOARD_STATES = ["reading", "try", "hold"];
+
+/** PUT /api/board/{url_hash} の本文。state が "unread" なら削除(未読に戻す)。 */
+export function validateBoardInput(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "body_must_be_an_object" };
+  const state = body.state;
+  if (state !== "unread" && !BOARD_STATES.includes(state)) return { ok: false, error: "bad_state" };
+  const note = body.note ?? "";
+  if (typeof note !== "string" || note.length > 200) return { ok: false, error: "bad_note" };
+  return { ok: true, state, note };
+}
+
+export function isUrlHash(v) {
+  return typeof v === "string" && HASH_RE.test(v);
+}
+
+/** GET /api/episodes のクエリ。 */
+export function buildEpisodeQuery(searchParams) {
+  const kind = searchParams.get("kind") ?? "daily";
+  if (!["daily", "weekly"].includes(kind)) return { ok: false, error: "bad_kind" };
+
+  const date = searchParams.get("date") ?? "latest";
+  if (date !== "latest" && !(DATE_RE.test(date) || /^\d{4}-W\d{2}$/.test(date))) return { ok: false, error: "bad_date" };
+
+  const category = searchParams.get("category");
+  if (category !== null && category !== "all" && !CATEGORIES.includes(category)) return { ok: false, error: "bad_category" };
+
+  return { ok: true, kind, date, category };
 }

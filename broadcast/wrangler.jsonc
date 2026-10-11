@@ -1,17 +1,29 @@
 {
-  // ResearchBroadcast Phase 1(取り込みと記事API)。ResearchBroadcast_DESIGN.md §3・§9 参照。
-  // 秘密情報(INGEST_TOKEN)はここに書かない: `wrangler secret put INGEST_TOKEN`(ローカルは .dev.vars)
+  // ResearchBroadcast(取り込み・記事API・episode・ボード・サイト)。ResearchBroadcast_DESIGN.md §3・§9 参照。
+  // **無料プランで動く構成**: Worker + D1 + 静的アセットのみ(R2・Containers・Workflows・Workers AI は使わない)。
+  //
+  // 秘密情報はここに書かない(ローカルは .dev.vars):
+  //   wrangler secret put INGEST_TOKEN    ... 機械(GitHub Actions)用。取り込みの Bearer トークン
+  //   wrangler secret put VIEW_PASSWORD   ... 人(ブラウザ)用。サイトのログインに使う長いパスワード
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "research-broadcast",
   "main": "src/index.js",
   "compatibility_date": "2026-10-11",
   "compatibility_flags": ["nodejs_compat"],
 
+  // サイトの本体(HTML/JS/CSS)。静的アセットの配信は無料・無制限。/api/* だけが Worker で動く
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+
   "vars": {
-    // "false" にすると GET /api/* をトークン無しで読める。Cloudflare Access が、このWorkerの
+    // "false" にすると /api/* の読み出し・ボードをログイン無しで使える。Cloudflare Access が、このWorkerの
     // 全ホスト名(workers.dev を含む)を保護していると確認できたときだけ変更すること。
     "READ_REQUIRES_TOKEN": "true",
-    // 記事の保持日数(設計 §4.3。articles_log.json と同じ90日)
+    // 記事・日次 episode の保持日数(設計 §4.3。articles_log.json と同じ90日)
     "RETENTION_DAYS": "90"
   },
 
