@@ -31,8 +31,8 @@
     {
       "binding": "DB",
       "database_name": "research-broadcast",
-      // `wrangler d1 create research-broadcast` の出力のIDに置き換える(デプロイ時のみ必要。ローカル開発は不要)
-      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      // `wrangler d1 create research-broadcast` の出力のID(秘密ではない。ID だけでは DB を操作できない)
+      "database_id": "42851536-a580-4355-90a8-c6e897c29a0e",
       "migrations_dir": "./migrations"
     }
   ],
