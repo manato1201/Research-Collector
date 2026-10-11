@@ -16,7 +16,8 @@
 | 分類の補助 | 記事を3カテゴリに自動で分類。当てはまらないものは「未分類」として人の確認に回す |
 | NotebookLM自動追加 | 週次ノートブックへ自動振り分け・追加 |
 | 週次レポート生成 | 収集内容からカテゴリ別日本語まとめレポートを水曜・日曜に自動生成 |
-| 収集結果ビュー | 集まった記事を期間・カテゴリで絞り込める一覧(`results.html`)を、収集のたびに自動生成 |
+| 収集結果ビュー | 集まった記事を期間・カテゴリで絞り込める一覧(`results.html`)を、収集のたびに自動生成。記事ごとに短い要約つき |
+| ResearchBroadcast への送信(任意) | 収集した記事を、Cloudflare 上の別システム(`broadcast/`)へ送る。Secretを登録するまでは何もしない |
 | 認証自動更新 | Windowsタスクスケジューラで1日2回(AM6:00/PM6:00)に認証を自動更新 |
 
 ---
@@ -342,7 +343,10 @@ research-collector/
 │   └── auth_monitor.py        # Cookie残日数の事前検知
 ├── scripts/
 │   ├── update_readme_health.py # health.json → README運用ステータス表を更新
-│   └── build_site.py          # results.html の生成 / index.html の数値の更新
+│   ├── build_site.py          # results.html の生成 / index.html の数値の更新
+│   └── post_ingest.py         # 収集した記事を ResearchBroadcast へ送る(任意)
+├── broadcast/                 # ResearchBroadcast Phase 1: 取り込みの受け口と記事API (Cloudflare Worker + D1)
+├── tests/                     # 回帰テスト(python -m unittest discover tests)
 ├── x_urls.txt                 # X の取り込み対象URL(自分で書く)
 ├── results.html               # 収集結果ビュー(自動生成)
 ├── index.html                 # システム解説ページ(数値は自動生成)
