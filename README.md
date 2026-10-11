@@ -345,7 +345,7 @@ research-collector/
 │   ├── update_readme_health.py # health.json → README運用ステータス表を更新
 │   ├── build_site.py          # results.html の生成 / index.html の数値の更新
 │   └── post_ingest.py         # 収集した記事を ResearchBroadcast へ送る(任意)
-├── broadcast/                 # ResearchBroadcast Phase 1: 取り込みの受け口と記事API (Cloudflare Worker + D1)
+├── broadcast/                 # ResearchBroadcast: 取り込みの受け口・記事API・episode・ボード・サイト (Cloudflare Worker + D1。無料プラン)
 ├── tests/                     # 回帰テスト(python -m unittest discover tests)
 ├── x_urls.txt                 # X の取り込み対象URL(自分で書く)
 ├── results.html               # 収集結果ビュー(自動生成)
