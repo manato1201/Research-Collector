@@ -56,6 +56,7 @@
   .chip.review { color: var(--accent3); border-color: var(--accent3); }
   .chip.review[aria-pressed="true"] { background: var(--surface); }
   .chip .n { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: .7rem; margin-left: .35rem; opacity: .8; }
+  .chip.review .n.has { opacity: 1; background: var(--accent3); color: var(--bg); border-radius: 999px; padding: 0 .45rem; font-weight: 700; }
   .sort-btn { margin-left: auto; border-color: var(--border); }
   .range-note { font-family: var(--mono); font-size: .7rem; color: var(--text-muted); }
   button:focus-visible, a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -70,6 +71,8 @@
   .title { font-weight: 400; font-size: .95rem; line-height: 1.5; text-decoration: none; overflow-wrap: anywhere;
            display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .title:hover { color: var(--accent); text-decoration: underline; }
+  .sum { font-size: .8rem; color: var(--text-muted); margin-top: .15rem; line-height: 1.55;
+         display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .sub { font-size: .76rem; color: var(--text-muted); margin-top: .1rem; }
   .sub .flag { color: var(--accent3); font-weight: 400; }
   .row time { font-size: .75rem; color: var(--text-muted); white-space: nowrap; padding-top: .2rem; }
@@ -170,7 +173,7 @@
   <details><summary>配布サイトの新着(通知のみ・導入はしていません)</summary><ul><li><a href="https://skills.sh/site/open.feishu.cn/lark-calendar" target="_blank" rel="noopener noreferrer">site/open.feishu.cn · lark-calendar</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/prime-skills/runcomfy-agent-skills/wan-2-7" target="_blank" rel="noopener noreferrer">prime-skills/runcomfy-agent-skills · wan-2-7</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/prime-skills/runcomfy-agent-skills/ai-avatar-video" target="_blank" rel="noopener noreferrer">prime-skills/runcomfy-agent-skills · ai-avatar-video</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/prime-skills/runcomfy-agent-skills/face-swap" target="_blank" rel="noopener noreferrer">prime-skills/runcomfy-agent-skills · face-swap</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/prime-skills/runcomfy-agent-skills/video-inpainting" target="_blank" rel="noopener noreferrer">prime-skills/runcomfy-agent-skills · video-inpainting</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/prime-skills/runcomfy-agent-skills/video-extend" target="_blank" rel="noopener noreferrer">prime-skills/runcomfy-agent-skills · video-extend</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/mattpocock/skills/zoom-out" target="_blank" rel="noopener noreferrer">mattpocock/skills · zoom-out</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/mattpocock/skills/implement-spec" target="_blank" rel="noopener noreferrer">mattpocock/skills · implement-spec</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/mattpocock/skills/caveman" target="_blank" rel="noopener noreferrer">mattpocock/skills · caveman</a> <span class="meta">skills.sh · 2026-10-10</span></li><li><a href="https://skills.sh/mattpocock/skills/retro" target="_blank" rel="noopener noreferrer">mattpocock/skills · retro</a> <span class="meta">skills.sh · 2026-10-10</span></li></ul><p class="meta" style="padding:0 1rem .8rem">導入する前に、中身(SKILL.md など)を人が確認してください。</p></details>
   <div class="notes">
     <p>カテゴリは記事のタイトル等から自動で付けたヒントで、確定ではありません。「未分類」は人の確認を促すための表示です(ノートブックへの振り分けは収集元ごとに決まっており、この分類では変わりません)。</p>
-    <p>NotebookLM への追加は非公式APIを利用しています。灰色の丸は、似たタイトルの記事に統合して追加しなかったものです。生成: 2026-10-11 09:44 JST</p>
+    <p>NotebookLM への追加は非公式APIを利用しています。灰色の丸は、似たタイトルの記事に統合して追加しなかったものです。生成: 2026-10-11 15:11 JST</p>
   </div>
 </main>
 
@@ -209,7 +212,9 @@
       if (vis) shown++;
     });
     Array.prototype.forEach.call(document.querySelectorAll(".chip"), function (c) {
-      c.querySelector(".n").textContent = counts[c.getAttribute("data-cat")];
+      var cnt = counts[c.getAttribute("data-cat")], nEl = c.querySelector(".n");
+      nEl.textContent = cnt;
+      nEl.classList.toggle("has", cnt > 0);
       c.setAttribute("aria-pressed", state.cat === c.getAttribute("data-cat") ? "true" : "false");
     });
     Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
