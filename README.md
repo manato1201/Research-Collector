@@ -28,7 +28,7 @@
 |---|---|
 | Zenn / Qiita（unity/unrealengine/directx/hlsl/gamedev/houdini/pcg） | Game-Dev-Tech |
 | Unity / UE 公式ブログ | Game-Dev-Tech + Graphics-Research |
-| CEDiL新着セッション / CEDEC YouTube | Graphics-Research + Software-Engineering |
+| CEDiL新着セッション / CEDEC YouTube | Graphics-Research |
 | SideFX Houdini 変更履歴(バグ修正のみのものは除く) | Game-Dev-Tech + Graphics-Research |
 | arXiv / Semantic Scholar（RAG・LLM・DCC学習関連） | Software-Engineering |
 | Cloudflare 変更履歴 / Hugging Face ブログ（モデルの公開） | Software-Engineering |
