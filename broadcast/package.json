@@ -1,0 +1,16 @@
+{
+  "name": "research-broadcast-worker",
+  "private": true,
+  "version": "0.1.0",
+  "description": "ResearchBroadcast Phase 1: 取り込み(ingest)と記事API(D1)。ResearchBroadcast_DESIGN.md 参照",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "db:local": "wrangler d1 execute DB --local --file=./schema.sql",
+    "test": "node --test",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.149.0"
+  }
+}
