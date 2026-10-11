@@ -8,6 +8,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._text import clean_title, make_summary
 from .retry import fetch_feed, record_failure
 
 logger = logging.getLogger(__name__)
@@ -87,11 +88,12 @@ def collect(max_per_feed: int = 20) -> list[dict]:
 
                 articles.append({
                     "url":          url,
-                    "title":        entry.get("title", ""),
+                    "title":        clean_title(entry.get("title", "")),
                     "source_type":  source_type,
                     "platform":     platform,
                     "published_at": _parse_date(entry),
                     "url_hash":     h,
+                    "summary":      make_summary(entry),
                 })
 
         except Exception as e:
