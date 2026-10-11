@@ -1,10 +1,10 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-11T09:02:03Z",
+    "run_at": "2026-10-11T21:02:52Z",
     "collected": 96,
-    "new": 5,
-    "notebooklm_ok": 10,
+    "new": 6,
+    "notebooklm_ok": 12,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
@@ -20,7 +20,7 @@
     },
     "failed_sources": 0,
     "source_failures": [],
-    "watch_new": 13
+    "watch_new": 1
   },
   "weekly": {
     "status": "error",
