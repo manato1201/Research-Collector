@@ -14,6 +14,8 @@ continue-on-error)。受け手側は `url_hash` で upsert する設計なので
                              両方に対応できるようにしてある
 
 契約(schema 1): `broadcast/README.md` に、受け手側の仕様と一緒に書いてある。
+articles に加えて、任意の episodes(日次・週次の番組表。nbklm/episodes.py が生成)と
+failures(直近の実行で取得に失敗した収集元)を、最初のバッチに載せて送る。
 
     python scripts/post_ingest.py [--since-hours 36] [--dry-run]
 """
@@ -73,11 +75,23 @@ def shape(entry: dict) -> dict:
     return out
 
 
-def build_batches(entries: list[dict], health: dict, now: datetime, since_hours: float = 36):
+def build_failures(health: dict) -> list[dict]:
+    """直近の実行で取得に失敗した収集元(/status の「失敗した収集元」に出す)。エラー文は短く切る。"""
+    daily = (health or {}).get("daily", {}) or {}
+    out = []
+    for f in (daily.get("source_failures") or [])[:20]:
+        if isinstance(f, dict) and f.get("source"):
+            out.append({"source": str(f["source"])[:120], "error": str(f.get("error", ""))[:200]})
+    return out
+
+
+def build_batches(entries: list[dict], health: dict, now: datetime, since_hours: float = 36,
+                  episodes: list[dict] | None = None):
     """
     Returns
     -------
     (batches, stats)  batches は送信するJSON(dict)のリスト。stats は集計。
+    episodes / failures は最初のバッチにだけ載せる(再送しても冪等)。
     """
     cutoff = now - timedelta(hours=since_hours)
     recent, skipped_ineligible = [], 0
@@ -104,7 +118,20 @@ def build_batches(entries: list[dict], health: dict, now: datetime, since_hours:
             "run": run,
             "articles": recent[i:i + BATCH_SIZE],
         })
-    return batches, {"articles": len(recent), "skipped_ineligible": skipped_ineligible, "batches": len(batches)}
+
+    eps = [e for e in (episodes or []) if e.get("id")]
+    failures = build_failures(health)
+    if (eps or failures) and not batches:
+        # 新しい記事が無くても、episode・失敗の状態は送る(受け口は articles が空でも受け付ける)
+        batches.append({"schema": SCHEMA_VERSION, "sent_at": sent_at, "run": run, "articles": []})
+    if batches:
+        if eps:
+            batches[0]["episodes"] = eps
+        batches[0]["failures"] = failures
+    return batches, {
+        "articles": len(recent), "skipped_ineligible": skipped_ineligible,
+        "batches": len(batches), "episodes": len(eps), "failures": len(failures),
+    }
 
 
 def allowed_url(url: str) -> bool:
@@ -163,10 +190,16 @@ def main(argv=None) -> int:
     except Exception:
         health = {}
 
-    batches, stats = build_batches(articles_log.load(), health, datetime.now(timezone.utc), args.since_hours)
+    from nbklm import episodes as episodes_mod
+
+    now = datetime.now(timezone.utc)
+    entries = articles_log.load()
+    batches, stats = build_batches(
+        entries, health, now, args.since_hours, episodes=episodes_mod.build_for_run(entries, now)
+    )
     logger.info(
-        f"ingest: {stats['articles']} articles in {stats['batches']} batch(es) "
-        f"({stats['skipped_ineligible']} skipped as not eligible)"
+        f"ingest: {stats['articles']} articles, {stats['episodes']} episodes, {stats['failures']} failures "
+        f"in {stats['batches']} batch(es) ({stats['skipped_ineligible']} skipped as not eligible)"
     )
     if args.dry_run or not batches:
         return 0
