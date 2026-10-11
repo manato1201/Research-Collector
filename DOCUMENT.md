@@ -417,6 +417,7 @@ Research-Collector/
 │   ├── release_notes_collector.py # SideFX / Cloudflare / Hugging Face の更新情報 (S3)
 │   ├── x_posts_collector.py    # x_urls.txt のURLだけを取り込む (S4)
 │   ├── watch_collector.py      # 配布サイトの新着監視。通知のみ (S5)
+│   ├── _text.py                # タイトルのHTML除去・要約の短縮 (ResearchBroadcast §5)
 │   └── (※ .gitignore対象のローカル限定コレクターが存在する場合あり、11章参照)
 ├── nbklm/
 │   ├── __init__.py
@@ -431,7 +432,11 @@ Research-Collector/
 │   └── seen_urls.py             # 収集済みURL重複チェック管理（Git管理）
 ├── scripts/
 │   ├── update_readme_health.py  # health.json → README運用ステータス表を更新
-│   └── build_site.py            # results.html の生成 / index.html の数値の更新 (U1/U2)
+│   ├── build_site.py            # results.html の生成 / index.html の数値の更新 (U1/U2)
+│   ├── post_ingest.py           # 収集した記事を ResearchBroadcast の /api/ingest へ送る(任意)
+│   └── check_text_source.py     # NotebookLMのテキストソース追加の実サービス確認(手動で1回)
+├── broadcast/                    # ResearchBroadcast Phase 1: 取り込みの受け口と記事API (Cloudflare Worker + D1)
+├── tests/                        # 回帰テスト(python -m unittest discover tests)
 ├── main.py                      # メインエントリーポイント(Phase 5〜7で無変更)
 ├── local_collect_extra.py       # (.gitignore対象) ローカル限定の追加収集エントリポイント
 ├── health.py                    # 実行結果を health.json に記録
@@ -696,6 +701,8 @@ flowchart TB
 | U2 | 収集結果ビュー(期間・カテゴリ・未分類で絞り込み) | `results.html` | 実装済み・ブラウザで操作確認 |
 | U3 | 決めごと表と、日付・件数の等幅数字 | 本章 12.10 | 実装済み |
 | U4 | ライト/ダークのテーマ | `index.html`、`results.html`、`LECTURE.html` | 実装済み |
+| 追補 | UIパーツ・Motion(バッジ・カウントアップ・スクロールスパイ・フェードイン) | `index.html`、`results.html` | 実装済み(12.11) |
+| RB | ResearchBroadcast との接続(要約の保存・取り込みの送信・受け口のWorker) | `collectors/_text.py`、`scripts/post_ingest.py`、`broadcast/` | 実装済み・ローカルで検証。デプロイは未実施(12.12) |
 
 ```mermaid
 flowchart TB
@@ -853,8 +860,52 @@ README の運用ステータス表には、0件でない `failed_sources` / `unc
 | スマホ | 横スクロールさせない(広い表はその枠の中でスクロール) |
 | 動き | `prefers-reduced-motion` で止める |
 
-> **確認済みの範囲**: 収集〜分類〜意味重複〜ログ〜health記録までの日次収集は、実ネットワークで取得し、NotebookLMへの書き込みだけを模擬した状態で通しの動作を確認した(2回目の実行で取得済みがスキップされ、失敗したX投稿だけが再試行されることを含む)。**GitHub Actions上の実運用での初回実行は、このコミットのpush後**となる。`articles_log.json` が貯まるまでは、入口ページの「今週の収集数」は「—」と表示される。
-> **既存のまま残っていること**: `LECTURE.html` はスマホ幅で横にはみ出す(今回の変更前から同じ)。今回の対象はテーマの追加のみ。
+### 12.11 UIパーツ・Motion の追補(2026-10-11)
+
+`IMPROVEMENT_DESIGN_2026-10.md` の追補(「UIパーツ チートシート24」「スクロール演出チートシート24」)を反映した。**守ること**: 1画面で使う動きは2種類まで / すべて `prefers-reduced-motion` で止める / 通常画面は静かに保つ。
+
+| 種別 | 名前(シート番号) | 場所 | 実装 |
+|---|---|---|---|
+| パーツ | チップ(13)・セグメントコントロール(12) | `results.html` のカテゴリ・期間の切り替え | 既存(12.10)。選択状態は `aria-pressed` |
+| パーツ | アコーディオン(04) | 失敗した収集元・配布サイトの新着 | 既存。`<details>`(普段は閉じる) |
+| パーツ | バッジ(23) | 「未分類(要確認)」の件数 | チップ内の件数を、1件以上のとき橙の塗りのバッジにした。画面上部にも「要確認 n件」を出す |
+| 動き | カウントアップ(08) | `index.html` の入口の数値 | 生成された値(`data-count`)まで900msで1回。動きを減らす設定・JS無しでは最初から最終値 |
+| 動き | スクロールスパイ(24)・スティッキー(17) | `index.html` のナビ | 今いるセクションのリンクだけを丸いピルにする(`aria-current`)。ナビは固定 |
+| 動き | フェードイン(01) | 構成図・収集元の表 | 見えたときに1回だけ。JSが無い・動きを減らす設定なら最初から表示 |
+
+1画面で同時に動くのは、トップが「ページ読み込みのフェード + カウントアップ」、説明部分が「スクロールスパイ + フェードイン」の各2種類。ブラウザで、カウントアップが生成値に着地すること・スパイが現在のセクションだけを示すこと・動きを減らす設定で何も隠れないことを確認した。
+
+### 12.12 ResearchBroadcast との接続(2026-10-11)
+
+`ResearchBroadcast_DESIGN.md`(Cloudflare 上に、収集結果を音声・図・動画つきで見せる出力側の拡張)のうち、**この収集システム側が担う部分**を実装した。設計の Phase 1 に当たる。
+
+```mermaid
+flowchart LR
+    C["収集・分類・重複判定<br/>(main.py)"] --> L["articles_log.json<br/>+ 要約(summary)"]
+    L --> P["scripts/post_ingest.py<br/>未設定なら何もしない"]
+    P -- "POST /api/ingest<br/>Bearer(冪等: url_hash)" --> W["Worker(broadcast/)<br/>D1 に upsert"]
+    W --> A["GET /api/articles?category=<br/>GET /api/status"]
+```
+
+| 項目 | 内容 |
+|---|---|
+| 要約(設計 §5 段階0) | 収集時にフィードの `summary` / `description` を**140文字以内**に切って保存する(`collectors/_text.py`)。要約が無い収集元(Hugging Face ブログ)は項目ごと省く。**X投稿は本文を再掲載しない**ので付けない。古い行は要約なしで読める(後方互換) |
+| タイトルの整形 | フィード由来のタイトルからHTMLタグを除く(UEブログに生の `<p><em>…` が混ざっていた) |
+| 要約の使い道 | ① 分類の手がかり(一致 89.3% → 90.4%、無関係な記事は引き続き「どれでもない」) ② 重複判定: タイトルが切れている(末尾が `...`)記事は要約の先頭も足して比較する。SideFX はタイトルを40文字で切るため、先頭が同じ別々の変更を同一視しないようにした ③ `results.html` の要約行 |
+| 取り込みの送信 | `scripts/post_ingest.py`。`BROADCAST_INGEST_URL` / `BROADCAST_INGEST_TOKEN` が未設定なら**何もしない**。送るのは直近36時間の記事のうち契約の項目だけ。カテゴリが3つの範囲外(ローカル限定の分野)・http(s)以外のURLは送らない。トークンは `https` かループバックにしか送らない |
+| 受け口 | `broadcast/`(Cloudflare Worker + D1)。契約・API・ローカルでの試し方・デプロイ手順は `broadcast/README.md` |
+| 日次ワークフロー | 「Send new articles to ResearchBroadcast (optional)」を追加。`continue-on-error` で、失敗しても収集には影響しない |
+
+**確認したこと**: `wrangler dev --local`(workerd + ローカルのD1)に、実際の `articles_log.json`(35件)を実クライアントから送り、受け付け・再送で増えないこと・カテゴリ別の絞り込み(複数カテゴリの記事は両方に出て、全体の件数はURL単位)・認証(トークン無し/違い → 401)・本文サイズ上限(413)・範囲外カテゴリの拒否(422)・X投稿の要約を保存しないこと、を26項目で確認した。
+**確認していないこと**: Cloudflare へのデプロイ(アカウントの作業)。設計の Phase 0(Containers で VOICEVOX、Workflows、Workers AI の要約)と Phase 2 以降(episode・サイト・音声・動画・Access・Slack通知)は、有料プランでの測定が先に必要なため未着手。
+
+> **隔離方針との関係**: ローカル限定の分野は、`articles_log.json` に書かれない(11章)ため、そもそも送信対象にならない。それでも混ざった場合に備え、送信側(`post_ingest.py`)と受け口(Worker)の**両方**で、3カテゴリ以外を拒否している。
+
+> **12章全体の確認済みの範囲**:
+> - **本番(GitHub Actions)**: 2026-10-10 の日次実行で、取得96件・新規2件・失敗0件・ノートブック81冊、`articles_log.json` 35件(追加32・統合3)を確認した。統合された3件は、ZennとQiitaの転載1組と、SideFXが別IDで再掲した同一内容2件で、いずれも正しい統合だった。
+> - **ローカル**: 要約・ResearchBroadcast の送信と受け口は、`wrangler dev --local` で通しの動作を確認した(12.12)。UIは実ブラウザで確認した(12.11)。
+> - **未確認**: NotebookLM のテキストソース追加(X投稿用。`scripts/check_text_source.py` で確認する)、Cloudflare へのデプロイ。
+> **既存のまま残っていること**: `LECTURE.html` はスマホ幅で横にはみ出す(今回の変更前から同じ)。対象はテーマの追加のみ。
 
 ---
 
@@ -909,3 +960,4 @@ gh workflow run auth_keepalive.yml
 | 2026-08-22 | ローカル限定拡張を実機で本番実行し検証完了。NotebookLMへの実追加・2023年分バックフィル・Windows Task Scheduler経由の無人実行(`Start-ScheduledTask`)まで一通り確認。実機テストで「ローカルの認証セッションはGitHub Actions側のキープアライブ対象外で、無人実行タイミング次第では失効している」ことが判明したため、ローカル収集タスクのトリガーを「NotebookLM AuthRefresh」直後に変更 |
 | 2026-08-22 | 収集頻度を1日4回(6時間おき)から1日2回(AM6:00/PM6:00)に削減。週次レポート生成を「2日に1回」から「水曜・日曜」の固定曜日に変更。`daily_collect.yml`/`weekly_digest.yml`のcron、`register_task.ps1`のタスクスケジューラトリガーを同期して更新 |
 | 2026-10-10 | `IMPROVEMENT_PLAN_2026-10.md` / `IMPROVEMENT_DESIGN_2026-10.md` を実装(12章)。新収集元(SideFX・Cloudflare・Hugging Face・UE PCG)、X投稿の取り込み、skills.sh の新着監視、記事の分類補助と意味での重複判定、取得失敗の `health.json` 記録、収集結果ビュー `results.html`、入口ページの再設計とライト/ダークのテーマ。実データで分類精度(一致83.8%)と重複判定の閾値(0.95)を調整。恒常的に404だった Unity Releases フィードを削除 |
+| 2026-10-11 | 本番の初回実行(35件・失敗0件)を確認。UIパーツ・Motion の追補(バッジ・カウントアップ・スクロールスパイ・フェードイン)と、ResearchBroadcast 第2版のうち収集側の部分(要約の保存・タイトルのHTML除去・取り込みの送信・受け口のWorker)を実装(12.11・12.12)。要約を分類と重複判定の手がかりに追加 |
