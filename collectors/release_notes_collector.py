@@ -17,6 +17,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._text import clean_title, make_summary
 from .retry import fetch_feed, record_failure, retry
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ def _entries_to_articles(entries, source_type, platform, seen_hashes, filter_fn=
     articles = []
     for entry in entries:
         url = entry.get("link", "")
-        title = entry.get("title", "")
+        title = clean_title(entry.get("title", ""))
         if not url or (filter_fn and filter_fn(title)):
             continue
         h = _url_hash(url)
@@ -90,6 +91,8 @@ def _entries_to_articles(entries, source_type, platform, seen_hashes, filter_fn=
             "platform":     platform,
             "published_at": _parse_date(entry),
             "url_hash":     h,
+            # SideFX はタイトルを40文字で切るが、summary に変更内容の全文がある
+            "summary":      make_summary(entry),
         })
     return articles
 
