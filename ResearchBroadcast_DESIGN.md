@@ -40,9 +40,9 @@
 |---|---|---|
 | Game-Dev-Tech | `game_dev_tech` | zenn, qiita, unity, unreal, houdini |
 | Graphics-Research | `graphics_research` | unity, unreal, cedec, gdc, houdini |
-| Software-Engineering | `software_engineering` | cedec, gdc, paper, arxiv, cloudflare, model, x_post |
+| Software-Engineering | `software_engineering` | paper, arxiv, cloudflare, model, x_post |
 
-- **1つの記事が複数のカテゴリに入る**(例: unity / unreal / houdini は2カテゴリ、cedec / gdc も2カテゴリ)。
+- **1つの記事が複数のカテゴリに入る**(例: unity / unreal / houdini は2カテゴリ。cedec / gdc は2026-10-11に Graphics-Research のみに変更)。
 - `articles_log.json` の各行は、すでに **`categories`**(配列)・`label`・`keywords`・`review`・`status`・`published`・`collected_at` を持つ。**カテゴリ別の表示に必要な項目は揃っている**。
 - **ローカル限定の分野(`notebook_ids_local.py` / `local_collect_extra.py`)は、ログに書かれず、このサイトにも出さない**(既存の隔離方針を守る)。
 

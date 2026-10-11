@@ -53,7 +53,7 @@
 - 振り分け先(source_type由来のカテゴリ)は変えていない。分類は「妥当かの補助」にとどめた(計画の「補助」に合わせた)。
 - S3の「モデルの公開ページ」はHugging Faceのブログと解釈した。ほかのページを指す場合は `STATIC_FEEDS` に足せばよい。
 
-**分かったこと(要判断)**: 分類器はCEDEC 35件中22件を「ゲーム開発」と判定したが、CEDECの振り分け先は Graphics-Research + Software-Engineering で Game-Dev-Tech を含まない。足すかどうかは運用上の判断として残している。
+**決定(2026-10-11)**: 分類器はCEDEC 35件中22件を「ゲーム開発」と判定したが、CEDEC / GDC の振り分け先は **Graphics-Research のみ**とした(以前は Software-Engineering も)。`nbklm/notebook_ids.py` の `cedec` / `gdc` を変更。
 
 ## 注意・未確認
 - 認証更新(Windowsタスクスケジューラ)に依存する部分は、今回触れていない。

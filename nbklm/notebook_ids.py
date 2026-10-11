@@ -42,9 +42,9 @@ SOURCE_TYPE_TO_CATEGORIES = {
     "unity":   ["game_dev_tech", "graphics_research"],
     "unreal":  ["game_dev_tech", "graphics_research"],
 
-    # CEDEC/GDC → グラフィクス + ソフトウェア工学の両方
-    "cedec":   ["graphics_research", "software_engineering"],
-    "gdc":     ["graphics_research", "software_engineering"],
+    # CEDEC/GDC → グラフィクスのみ(2026-10-11に変更。以前は Software-Engineering も)
+    "cedec":   ["graphics_research"],
+    "gdc":     ["graphics_research"],
 
     # 論文 → ソフトウェア工学のみ
     "paper":   ["software_engineering"],
