@@ -758,7 +758,10 @@ async function pageCategory(view, cat, params) {
   else ({ since, until } = previousMonthRange(today));
 
   view.replaceChildren(renderSkeleton());
-  const q = `category=${cat}&status=added&since=${since}${until ? `&until=${until}` : ""}&limit=200`;
+  // 追加カテゴリは論文が中心で、公開日が古いものも「最近集めた」として見たいので、収集した日で絞る
+  const byCollected = EXTRA.some((e) => e.id === cat);
+  const [fromKey, toKey] = byCollected ? ["collected_since", "collected_until"] : ["since", "until"];
+  const q = `category=${cat}&status=added&${fromKey}=${since}${until ? `&${toKey}=${until}` : ""}&limit=200`;
   const [res, headlineRes] = await Promise.all([
     api(`/api/articles?${q}`),
     api(`/api/episodes?kind=daily&date=latest&category=${cat}`).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),

@@ -307,6 +307,13 @@ export function buildArticleQuery(searchParams, categories = CATEGORIES) {
     params.push(collectedSince);
   }
 
+  const collectedUntil = searchParams.get("collected_until");
+  if (collectedUntil !== null) {
+    if (!DATE_RE.test(collectedUntil)) return { ok: false, error: "bad_collected_until" };
+    clauses.push("substr(collected_at, 1, 10) <= ?");
+    params.push(collectedUntil);
+  }
+
   // until: その日まで(先月の表示など。since と組み合わせて範囲にする)
   const until = searchParams.get("until");
   if (until !== null) {
