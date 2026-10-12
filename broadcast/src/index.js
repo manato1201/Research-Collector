@@ -10,6 +10,8 @@
 //   GET  /api/episodes/dates   episode のある日付の一覧
 //   GET  /api/board         ボード(読む・試す・保留)
 //   PUT  /api/board/{url_hash} | DELETE /api/board/{url_hash}
+//   GET  /api/reports      週次レポート(ダイジェスト)の一覧 / GET /api/reports/{id} 本文
+//   GET  /api/watch        配布サイトの新着(通知のみ)
 //   GET  /api/status        件数(URL単位)・カテゴリ別・直近の取り込み・失敗した収集元
 //   GET  /api/health        生存確認(認証なし。データは返さない)
 // それ以外は静的アセット(public/。サイトの本体)。サイト自体にデータは入っていない。
@@ -100,11 +102,20 @@ async function route(request, env, url) {
     return withAuth(request, env, url, true, () => handleBoardWrite(request, env, board[1], method));
   }
 
+  const report = /^\/api\/reports\/([^/]+)$/.exec(pathname);
+  if (report) {
+    if (method !== "GET") return methodNotAllowed("GET");
+    const id = decodeURIComponent(report[1]);
+    return withAuth(request, env, url, false, () => handleReport(env, id));
+  }
+
   const reads = {
     "/api/articles": () => handleArticles(url, env),
     "/api/episodes": () => handleEpisodes(url, env),
     "/api/episodes/dates": () => handleEpisodeDates(url, env),
     "/api/status": () => handleStatus(env),
+    "/api/reports": () => handleReportList(url, env),
+    "/api/watch": () => handleWatch(env),
   };
   if (reads[pathname]) {
     if (method !== "GET") return methodNotAllowed("GET");
@@ -237,6 +248,18 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
   headline = excluded.headline, json = excluded.json, updated_at = excluded.updated_at`;
 
+const UPSERT_REPORT_SQL = `
+INSERT INTO reports (id, kind, date, title, json, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
+ON CONFLICT(id) DO UPDATE SET
+  title = excluded.title, json = excluded.json, updated_at = excluded.updated_at`;
+
+// detected_at は最初に検知した時刻を保つ
+const UPSERT_WATCH_SQL = `
+INSERT INTO watch (url, watch, title, detected_at, updated_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(url) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`;
+
 const UPSERT_META_SQL =
   "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
 
@@ -279,6 +302,19 @@ async function handleIngest(request, env) {
     ),
   );
 
+  await runInBatches(
+    env.DB,
+    result.reports.map((r) =>
+      env.DB.prepare(UPSERT_REPORT_SQL).bind(r.id, r.kind, r.date, r.title, r.json, nowIso),
+    ),
+  );
+  await runInBatches(
+    env.DB,
+    result.watch.map((w) =>
+      env.DB.prepare(UPSERT_WATCH_SQL).bind(w.url, w.watch, w.title, w.detected_at, nowIso),
+    ),
+  );
+
   // 保持期間を過ぎた記事・日次の episode を消す(設計 §4.3: 保持90日。週次は小さいので残す)
   const days = Math.max(1, Number(env.RETENTION_DAYS) || 90);
   const cutoff = new Date(now.getTime() - days * 86_400_000);
@@ -289,30 +325,54 @@ async function handleIngest(request, env) {
     .bind(cutoff.toISOString().slice(0, 10))
     .run();
 
-  const accepted = result.accepted.length + result.episodes.length;
+  // 古い検知(ウォッチ)も、記事と同じ保持期間で消す
+  await env.DB.prepare("DELETE FROM watch WHERE detected_at < ?")
+    .bind(cutoff.toISOString().slice(0, 19) + "Z")
+    .run();
+
+  const accepted = result.accepted.length + result.episodes.length + result.reports.length + result.watch.length;
   const lastIngest = {
     received_at: nowIso,
     accepted: result.accepted.length,
     rejected: result.rejected.length,
     episodes: result.episodes.length,
     episodes_rejected: result.rejectedEpisodes.length,
+    reports: result.reports.length,
+    reports_rejected: result.rejectedReports.length,
+    watch: result.watch.length,
     purged: purged.meta?.changes ?? 0,
     run: result.run,
   };
   await env.DB.prepare(UPSERT_META_SQL).bind("last_ingest", JSON.stringify(lastIngest)).run();
   // 取り込みが止まったことに気づけるよう、「最後に1件以上受け付けた時刻」を別に持つ(全件拒否で上書きしない)
   // (失敗の状態だけを送る取り込みも「実行された」合図なので数える)
-  const submitted = accepted + result.rejected.length + result.rejectedEpisodes.length;
+  const submitted =
+    accepted + result.rejected.length + result.rejectedEpisodes.length + result.rejectedReports.length + result.rejectedWatch.length;
   const heartbeatOnly = submitted === 0 && result.failures !== null;
   if (accepted > 0 || heartbeatOnly) {
     await env.DB.prepare(UPSERT_META_SQL).bind("last_success_at", nowIso).run();
+  }
+  // 日次の実行の状態(run)は、送られてきたときだけ別に残す。レポートだけ・ウォッチだけの送信で消えないように
+  if (Object.keys(result.run).length > 0) {
+    await env.DB.prepare(UPSERT_META_SQL)
+      .bind("last_run", JSON.stringify({ received_at: nowIso, ...result.run }))
+      .run();
   }
   // 失敗した収集元は、送られてきたときだけ更新する(null = 送られていない)
   if (result.failures !== null) {
     await env.DB.prepare(UPSERT_META_SQL).bind("last_failures", JSON.stringify(result.failures)).run();
   }
 
-  console.log(JSON.stringify({ message: "ingest", accepted: lastIngest.accepted, episodes: lastIngest.episodes, rejected: lastIngest.rejected }));
+  console.log(
+    JSON.stringify({
+      message: "ingest",
+      accepted: lastIngest.accepted,
+      episodes: lastIngest.episodes,
+      reports: lastIngest.reports,
+      watch: lastIngest.watch,
+      rejected: lastIngest.rejected,
+    }),
+  );
 
   // 送られた記事・episode が1件も受け付けられなかった = 契約違反。呼び出し側が気づけるよう 422 で返す
   const status = submitted > 0 && accepted === 0 ? 422 : 200;
@@ -322,7 +382,14 @@ async function handleIngest(request, env) {
       accepted: lastIngest.accepted,
       rejected: lastIngest.rejected,
       episodes: lastIngest.episodes,
-      errors: [...result.rejected.slice(0, 5), ...result.rejectedEpisodes.slice(0, 5)],
+      reports: lastIngest.reports,
+      watch: lastIngest.watch,
+      errors: [
+        ...result.rejected.slice(0, 5),
+        ...result.rejectedEpisodes.slice(0, 5),
+        ...result.rejectedReports.slice(0, 5),
+        ...result.rejectedWatch.slice(0, 5),
+      ],
     },
     status,
   );
@@ -409,7 +476,8 @@ async function handleEpisodeDates(url, env) {
 }
 
 async function handleStatus(env) {
-  const [totals, byCategory, lastIngest, lastSuccess, lastFailures, latestDaily, latestWeekly] = await Promise.all([
+  const [totals, byCategory, lastIngest, lastSuccess, lastFailures, latestDaily, latestWeekly, reportStat, watchStat, lastRun] =
+    await Promise.all([
     env.DB.prepare(
       "SELECT COUNT(*) AS total, COALESCE(SUM(review), 0) AS review FROM articles WHERE status = 'added'",
     ).first(),
@@ -423,6 +491,9 @@ async function handleStatus(env) {
     env.DB.prepare("SELECT value FROM meta WHERE key = 'last_failures'").first(),
     env.DB.prepare("SELECT MAX(date) AS d FROM episodes WHERE kind = 'daily'").first(),
     env.DB.prepare("SELECT MAX(date) AS d FROM episodes WHERE kind = 'weekly'").first(),
+    env.DB.prepare("SELECT COUNT(*) AS n, MAX(date) AS d FROM reports").first(),
+    env.DB.prepare("SELECT COUNT(*) AS n, MAX(detected_at) AS d FROM watch").first(),
+    env.DB.prepare("SELECT value FROM meta WHERE key = 'last_run'").first(),
   ]);
 
   return json({
@@ -435,9 +506,42 @@ async function handleStatus(env) {
     // last_ingest: 直近の取り込み(全件拒否でも記録する) / last_success_at: 最後に1件以上受け付けた時刻
     last_ingest: lastIngest ? JSON.parse(lastIngest.value) : null,
     last_success_at: lastSuccess ? lastSuccess.value : null,
+    // last_run: 直近の日次の実行の状態(取得件数・収集元別・新規など)。run を伴う送信のときだけ更新される
+    last_run: lastRun ? JSON.parse(lastRun.value) : null,
     failures: lastFailures ? JSON.parse(lastFailures.value) : [],
     episodes: { latest_daily: latestDaily?.d ?? null, latest_weekly: latestWeekly?.d ?? null },
+    reports: { total: reportStat?.n ?? 0, latest: reportStat?.d ?? null },
+    watch: { total: watchStat?.n ?? 0, latest: watchStat?.d ?? null },
   });
+}
+
+// ------------------------------------------------------------------ レポート・ウォッチ
+
+async function handleReportList(url, env) {
+  const limit = Math.min(60, Math.max(1, Number(url.searchParams.get("limit")) || 30));
+  const rows = await env.DB.prepare(
+    `SELECT id, kind, date, title, updated_at,
+            json_extract(json, '$.week') AS week,
+            json_array_length(json, '$.sections') AS sections
+     FROM reports ORDER BY date DESC LIMIT ?`,
+  )
+    .bind(limit)
+    .all();
+  return json({ reports: rows.results });
+}
+
+async function handleReport(env, id) {
+  const row = await env.DB.prepare("SELECT * FROM reports WHERE id = ?").bind(id).first();
+  if (!row) return json({ error: "not_found" }, 404);
+  const body = JSON.parse(row.json);
+  return json({ id: row.id, kind: row.kind, date: row.date, title: row.title, updated_at: row.updated_at, ...body });
+}
+
+async function handleWatch(env) {
+  const rows = await env.DB.prepare(
+    "SELECT watch, title, url, detected_at FROM watch ORDER BY detected_at DESC LIMIT 50",
+  ).all();
+  return json({ items: rows.results });
 }
 
 // ------------------------------------------------------------------ ボード
