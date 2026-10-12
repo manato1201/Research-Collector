@@ -10,7 +10,10 @@
 | `GET /api/articles` / `/api/episodes` / `/api/status`              | 実装・ローカルで検証済み                                  |
 | ボード(読む・試す・保留)`/api/board`                               | 実装・ローカルで検証済み                                  |
 | ログイン(パスワード → 署名つきCookie)`/api/login`                  | 実装・ローカルで検証済み                                  |
-| サイト(今日の放送・カテゴリ・ボード・週次特集・状態)               | 実装。実ブラウザ(Chromium)で確認済み                      |
+| サイト(今日の放送・カテゴリ・ボード・週次特集・レポート・状態)     | 実装。実ブラウザ(Chromium)で確認済み                      |
+| 読み上げ(再生バー・章の送り・速度・声)                             | 実装。UI は実ブラウザで確認。**実際の音は未確認**(端末の声に依存) |
+| 週次レポート(NotebookLM のダイジェスト)`/api/reports`              | 実装・ローカルで検証済み。過去25本の取り込み(バックフィル)を用意 |
+| ウォッチ(skills.sh の新着。通知のみ)`/api/watch`                   | 実装・ローカルで検証済み                                  |
 | D1 スキーマ(`migrations/0001_init.sql`・`0002_episodes_board.sql`) | 実装・ローカルD1で適用確認                                |
 | **Cloudflare へのデプロイ**                                        | **済み**(2026-10-11。CLI だけで実施。下記「デプロイ」)    |
 | 音声ファイル・動画・Slack通知・Access                              | 未実装(無料プランの範囲外、または後続。下記「設計との差分」) |
@@ -23,8 +26,8 @@
 | --- | --- | --- |
 | episode を Workflows で生成(§4.2) | **GitHub Actions 上の Python が生成**し、`/api/ingest` で送る(`nbklm/episodes.py`) | Free の Worker は CPU 時間 10ms。Workflows は使わない。見出しは規則ベースで、AI も使わない |
 | episode の JSON を R2 に保存(§4.3) | **D1 の `episodes` テーブル**に直接保存(1件 最大200KB、実測は約10KB以下) | R2 を使わない |
-| 音声は VOICEVOX(Containers)(§6) | **ブラウザの読み上げ(`speechSynthesis`)** | 無料。声は端末による。音声ファイルは作らない |
-| 月次・先月の特集 | **「今日 / 今週 / 30日」** と週次特集 | 保持が90日で、月次を作るには足りない場合がある |
+| 音声は VOICEVOX(Containers)(§6) | **ブラウザの読み上げ(`speechSynthesis`)** + 再生バー(章の送り・速度・声の選択・一時停止) | 無料。声は端末による。音声ファイルは作らない |
+| 月次・先月の特集 | **「今日 / 今週 / 30日 / 先月」** と週次特集 | 先月は、カテゴリページの期間(前の月の1日〜末日)。月次の特集は作っていない |
 | Cloudflare Access(§8) | **パスワードでログイン**(署名つき Cookie)。Access は任意で後から重ねられる | Access の無料枠の条件が未確認 |
 | ボードのオフライン書き込み | なし(オンラインのみ) | Service Worker を使わない |
 | ティッカー・スクロールで展開する演出 | なし | 動きは「カウントアップ」「フェードイン」の2種類だけ |
@@ -35,11 +38,13 @@
 
 | パス | 内容 |
 | --- | --- |
-| `/` | 今日の放送。注目・カテゴリ別の3レーン・日付の切り替え・読み上げ。複数カテゴリの記事は「ほかのカテゴリにも」バッジ |
-| `/c/<category>` | カテゴリ。期間(今日 / 今週 / 30日)・収集元のチップ・要確認のみ |
-| `/board` | 読む / 試す / 保留 |
-| `/weekly[/<YYYY-Www>]` | 週次特集。日別の件数・カテゴリ別の件数(SVG)・章ごとの記事 |
-| `/status` | 取り込みの状態・件数・失敗した収集元。取り込みが止まっているとバッジを出す |
+| `/` | 今日の放送。速報ティッカー(停止できる)・注目・カテゴリ別の3レーン・日付の切り替え・全体/カテゴリ別の読み上げ・最新レポートへのリンク・配布サイトの新着(ウォッチ)。複数カテゴリの記事は「ほかのカテゴリにも」バッジ |
+| `/c/<category>` | カテゴリ。今日のヘッドライン・期間(今日 / 今週 / 30日 / 先月。上に固定)・収集元のチップ・要確認のみ・ページの読み上げ |
+| `/board` | 読む / 試す / 保留。カテゴリで絞り込み |
+| `/weekly[/<YYYY-Www>]` | 週次特集。日別の推移(線が引かれる SVG)・カテゴリ別の件数・章ごとの記事・目次・特集の読み上げ |
+| `/reports` | 週次レポートの一覧(NotebookLM が、その週に集めた記事をカテゴリごとにまとめたダイジェスト) |
+| `/reports/<id>` | レポートの本文。章の目次・読み進めの進捗バー・レポートの読み上げ。Markdown を安全に描画する(HTML・画像・`javascript:` は無効) |
+| `/status` | 取り込みの状態・件数・収集元ごとの取得件数・失敗した収集元・統合された記事・NotebookLM への追加に失敗した記事。取り込みが止まっているとバッジを出す |
 | `/login` | パスワード入力 |
 
 記事を開くドロワーは、Esc で閉じ、フォーカスを内側に閉じ込め、閉じると元の位置へ戻す。`prefers-reduced-motion` では動きを止める。
@@ -88,7 +93,13 @@ Content-Type: application/json
       "data": { "count": 24, "sources": [{ "platform": "zenn", "count": 6 }], "items": [] }
     }
   ],
-  "failures": [{ "source": "https://…", "error": "HTTP 503" }]
+  "failures": [{ "source": "https://…", "error": "HTTP 503" }],
+  "watch": [{ "watch": "skills.sh", "title": "owner/repo · skill", "url": "https://skills.sh/…", "detected_at": "2026-10-11T21:00:00Z" }],
+  "reports": [{
+    "id": "digest:2026-10-11", "kind": "digest", "date": "2026-10-11", "week": "2026-W41",
+    "title": "週次リサーチダイジェスト — 2026-W41", "generated_at": "2026-10-11T21:08:01Z", "intro": "収集ノートブック: …",
+    "sections": [{ "category": "game_dev_tech", "heading": "ゲーム開発・エンジン技術", "markdown": "# …" }]
+  }]
 }
 ```
 
@@ -99,6 +110,9 @@ Content-Type: application/json
 | `summary` | 任意。**`source_type` が `x_post` のときは、送られてきても保存しない**(設計 §5: X の本文を再掲載しない) |
 | `episodes[].id` | `daily:YYYY-MM-DD:<all or category>` / `weekly:YYYY-Www:all`。`kind` / `date` / `category` は id と一致していること。1回20件・1件200KBまで |
 | `failures` | 直近の実行で取得に失敗した収集元(20件まで)。省くと前回の値を残す。空配列で「失敗なし」に更新 |
+| `run.by_source` | 収集元ごとの取得件数(health.json の `by_source`。20件まで・名前40字まで・件数は整数)。`/api/status` の `last_run` に残る(レポートだけ・ウォッチだけの送信では消えない) |
+| `watch` | 配布サイトの新着(通知のみ。導入はしない)。URL は http(s) のみ・50件まで。最初に検知した時刻を保つ |
+| `reports` | 週次ダイジェスト。id は `digest:YYYY-MM-DD`。**セクションのカテゴリは3つの範囲内のみ**(範囲外は 422)。1件 300KB・1回5件まで。送信は `scripts/post_report.py`(週次ワークフロー) |
 | 1回の記事数 / 本文サイズ | 200件 / 1 MB まで。送信側は100件ずつに分け、episode と failures は最初のバッチにだけ載せる |
 | 古い形式の行 | `summary` 等が無くても受け付ける(後方互換) |
 
@@ -109,11 +123,13 @@ Content-Type: application/json
 | メソッド・パス | 認証 | 内容 |
 | --- | --- | --- |
 | `POST /api/ingest` | Bearer のみ | 取り込み。保持期間(既定90日)を過ぎた記事・日次 episode も、ここで削除する |
-| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
+| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD` / `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
 | `GET /api/episodes` | 同上 | `kind=daily\|weekly` / `date=latest\|YYYY-MM-DD\|YYYY-Www` / `category=all\|<カテゴリ>` |
 | `GET /api/episodes/dates` | 同上 | episode のある日付(最大60) |
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
-| `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_success_at`・`failures`・最新の episode |
+| `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
+| `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
+| `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
 | `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する |
 | `GET /api/health` | なし | 生存確認のみ。データは返さない |
 
@@ -141,9 +157,9 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。21項目)
-- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(62項目。認証・冪等・episode・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
-- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(約45項目。ログイン・ドロワー・ボードの保持・週次の図・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。29項目)
+- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(80項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
+- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(78項目。ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
 ---
 
@@ -151,7 +167,13 @@ python scripts/post_ingest.py --since-hours 100000
 
 **2026-10-11 に実施済み**(Worker `research-broadcast` + D1 `research-broadcast`(APAC)。`wrangler.jsonc` の `database_id` は反映済み)。
 以下は、最初に行った手順と、作り直すときの手順。CLI だけで行える(ダッシュボード操作は不要)。`wrangler login` は一度ブラウザで許可する。
-コードを更新したときは `npx wrangler deploy` だけでよい(migration を足したときは先に `npx wrangler d1 migrations apply DB --remote`)。
+コードを更新したときは `npx wrangler deploy` だけでよい(migration を足したときは先に `npx wrangler d1 migrations apply DB --remote`。`0003_reports_watch.sql` は、レポートとウォッチのテーブル)。
+
+**過去の週次レポートの取り込み(バックフィル)**: GitHub の成果物(`weekly-digest-*`。保持90日)を展開した `weekly_digest_YYYY-MM-DD.md` を渡す。
+```bash
+BROADCAST_INGEST_URL=https://<worker>/api/ingest BROADCAST_INGEST_TOKEN=<…> python scripts/post_report.py "<展開先>/weekly_digest_*.md"
+```
+同じ日付は上書きされるので、何度実行してもよい。`--dry-run` で、送らずに件数と章の数だけ確認できる。
 
 ```bash
 cd broadcast

@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildArticleQuery, validateArticle, validateIngest } from "../src/validate.js";
+import { buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
 
 const good = () => ({
   url_hash: "0123456789abcdef",
@@ -137,7 +137,7 @@ test("episode: id must agree with kind/date/category (idempotency key)", () => {
   assert.equal(validateEpisode({ ...episode(), kind: "weekly" }).error, "kind_mismatch");
   assert.equal(validateEpisode({ ...episode(), date: "2026-10-12" }).error, "date_mismatch");
   assert.equal(validateEpisode({ ...episode(), category: "graphics_research" }).error, "category_mismatch");
-  assert.equal(validateEpisode({ ...episode(), id: "daily:2026-10-11:botany" }).error, "bad_episode_id");
+  assert.equal(validateEpisode({ ...episode(), id: "daily:2026-10-11:unknown_category" }).error, "bad_episode_id");
   assert.equal(validateEpisode({ ...episode(), id: "x" }).error, "bad_episode_id");
 });
 
@@ -187,4 +187,88 @@ test("episode query", () => {
   assert.equal(buildEpisodeQuery(new URLSearchParams("kind=monthly")).error, "bad_kind");
   assert.equal(buildEpisodeQuery(new URLSearchParams("date=tomorrow")).error, "bad_date");
   assert.equal(buildEpisodeQuery(new URLSearchParams("category=nope")).error, "bad_category");
+});
+
+const report = () => ({
+  id: "digest:2026-10-11",
+  kind: "digest",
+  date: "2026-10-11",
+  title: "週次リサーチダイジェスト — 2026-W41",
+  week: "2026-W41",
+  generated_at: "2026-10-11T21:08:01Z",
+  intro: "収集ノートブック: Game-Dev-Tech-2026-W41",
+  sections: [
+    { category: "game_dev_tech", heading: "ゲーム開発・エンジン技術", markdown: "要点: Unity の更新" },
+    { category: "software_engineering", heading: "ソフトウェア工学・論文", markdown: "本文" },
+  ],
+});
+
+test("report: valid digest is accepted", () => {
+  const r = validateReport(report());
+  assert.equal(r.ok, true);
+  assert.equal(r.value.id, "digest:2026-10-11");
+  assert.equal(JSON.parse(r.value.json).sections.length, 2);
+});
+
+test("report: id/date/kind mismatch and bad shapes are rejected", () => {
+  assert.equal(validateReport({ ...report(), id: "digest:tomorrow" }).error, "bad_report_id");
+  assert.equal(validateReport({ ...report(), date: "2026-10-12" }).error, "date_mismatch");
+  assert.equal(validateReport({ ...report(), kind: "weekly" }).error, "bad_report_kind");
+  assert.equal(validateReport({ ...report(), sections: [] }).error, "bad_sections");
+  assert.equal(validateReport({ ...report(), week: "W41" }).error, "bad_week");
+});
+
+test("report: a category outside the allowlist is rejected (local-only fields never enter)", () => {
+  const r = report();
+  r.sections.push({ category: "unknown_category", heading: "x", markdown: "y" });
+  assert.equal(validateReport(r).error, "category_not_allowed");
+});
+
+test("report: oversized body is rejected", () => {
+  const r = report();
+  r.sections = ["game_dev_tech", "graphics_research", "software_engineering"].map((category) => ({
+    category,
+    heading: "h",
+    markdown: "x".repeat(110_000),
+  }));
+  assert.equal(validateReport(r).error, "report_too_large");
+});
+
+test("watch item: http(s) url and datetime required", () => {
+  const w = { watch: "skills.sh", title: "a/b · c", url: "https://skills.sh/a/b/c", detected_at: "2026-10-11T21:00:00Z" };
+  assert.equal(validateWatchItem(w).ok, true);
+  assert.equal(validateWatchItem({ ...w, url: "javascript:alert(1)" }).error, "bad_url");
+  assert.equal(validateWatchItem({ ...w, detected_at: "yesterday" }).error, "bad_detected_at");
+});
+
+test("ingest: reports-only and watch-only are accepted; empty is not", () => {
+  const r = validateIngest({ schema: 1, reports: [report(), { id: "x" }] });
+  assert.equal(r.ok, true);
+  assert.equal(r.reports.length, 1);
+  assert.deepEqual(r.rejectedReports, [{ index: 1, error: "bad_report_id" }]);
+  const w = validateIngest({
+    schema: 1,
+    watch: [{ watch: "skills.sh", title: "t", url: "https://skills.sh/a/b/c", detected_at: "2026-10-11T21:00:00Z" }],
+  });
+  assert.equal(w.ok, true);
+  assert.equal(w.watch.length, 1);
+  assert.equal(validateIngest({ schema: 1, reports: [], watch: [] }).error, "nothing_to_ingest");
+  assert.equal(validateIngest({ schema: 1, reports: Array.from({ length: 6 }, report) }).status, 413);
+});
+
+test("ingest: run.by_source keeps only short names with integer counts", () => {
+  const r = validateIngest({
+    schema: 1,
+    articles: [good()],
+    run: { collected: 96, by_source: { "Zenn/Qiita": 48, "": 1, bad: -1, frac: 1.5, ok: 0 } },
+  });
+  assert.deepEqual(r.run.by_source, { "Zenn/Qiita": 48, ok: 0 });
+});
+
+test("article query: since/until make a range; bad dates are rejected", () => {
+  const q = buildArticleQuery(new URLSearchParams("since=2026-09-01&until=2026-09-30"));
+  assert.equal(q.ok, true);
+  assert.deepEqual(q.params, ["2026-09-01", "2026-09-30"]);
+  assert.match(q.where, /<= \?/);
+  assert.equal(buildArticleQuery(new URLSearchParams("until=last-month")).error, "bad_until");
 });
