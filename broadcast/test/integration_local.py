@@ -313,6 +313,31 @@ check("articles can be filtered by until", call("GET", "/api/articles?since=2026
 check("bad until -> 400", call("GET", "/api/articles?until=soon")[0] == 400)
 check("merged articles are listable (status=merged)", call("GET", "/api/articles?status=merged&limit=5")[0] == 200)
 
+# --- 追加カテゴリ(Worker の環境変数 EXTRA_CATEGORIES。未設定の環境では SKIP)
+s, cats = call("GET", "/api/categories")
+check("categories endpoint lists the base three", s == 200 and cats["base"] == ["game_dev_tech", "graphics_research", "software_engineering"], (s, cats))
+if cats.get("extra"):
+    ex = cats["extra"][0]["id"]
+    ex_art = {"url_hash": "eeeeeeeeeeeeee01", "url": "https://example.com/extra-1", "title": "追加カテゴリの記事",
+              "source_type": "extra", "platform": "arxiv", "categories": [ex], "status": "added",
+              "collected_at": now, "published": "2020-01-01"}
+    s, r = call("POST", "/api/ingest", {"schema": 1, "articles": [ex_art]})
+    check("article in a configured extra category is accepted", s == 200 and r["accepted"] == 1, (s, r))
+    s, r = call("GET", f"/api/articles?category={ex}&status=added")
+    check("extra category is filterable", s == 200 and r["total"] == 1 and r["articles"][0]["url_hash"] == "eeeeeeeeeeeeee01", (s, r))
+    s, r = call("GET", f"/api/articles?category={ex}&collected_since={now[:10]}")
+    check("collected_since finds a paper with an old publication date", r["total"] == 1, r)
+    s, r = call("GET", f"/api/articles?category={ex}&since={now[:10]}")
+    check("since (publication date) does not", r["total"] == 0, r)
+    check("an unconfigured category is still rejected",
+          call("POST", "/api/ingest", {"schema": 1, "articles": [{**ex_art, "url_hash": "eeeeeeeeeeeeee02", "categories": ["not_configured"]}]})[0] == 422)
+    st = call("GET", "/api/status")[1]
+    check("status by_category includes the extra category", st["articles"]["by_category"].get(ex) == 1, st["articles"]["by_category"])
+    check("extra episodes use the configured id",
+          call("POST", "/api/ingest", {"schema": 1, "episodes": [{"id": f"daily:{now[:10]}:{ex}", "kind": "daily", "date": now[:10], "category": ex, "headline": "h", "data": {}}]})[0] == 200)
+else:
+    print("SKIP extra category checks (EXTRA_CATEGORIES not configured)")
+
 # --- ログイン(人)・Cookie・CSRF
 if VIEW_PASSWORD:
     s, r, _ = call_raw("GET", "/api/session")

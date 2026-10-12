@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
+import { resolveCategories, buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
 
 const good = () => ({
   url_hash: "0123456789abcdef",
@@ -271,4 +271,32 @@ test("article query: since/until make a range; bad dates are rejected", () => {
   assert.deepEqual(q.params, ["2026-09-01", "2026-09-30"]);
   assert.match(q.where, /<= \?/);
   assert.equal(buildArticleQuery(new URLSearchParams("until=last-month")).error, "bad_until");
+});
+
+test("extra categories: only well-formed ids, never overriding the base ones", () => {
+  const r = resolveCategories('{"extra_one":"追加1","extra_two":"追加2","game_dev_tech":"x","Bad-ID":"y","ok":""}');
+  assert.deepEqual(r.extra, { extra_one: "追加1", extra_two: "追加2" });
+  assert.deepEqual(r.all, ["game_dev_tech", "graphics_research", "software_engineering", "extra_one", "extra_two"]);
+  assert.deepEqual(resolveCategories(undefined).extra, {});
+  assert.deepEqual(resolveCategories("not json").extra, {}); // 壊れた設定は基本の3つだけで動く
+  assert.deepEqual(resolveCategories("[1,2]").extra, {});
+});
+
+test("extra categories: accepted only when configured", () => {
+  const art = { ...good(), categories: ["extra_one"] };
+  assert.equal(validateArticle(art).error, "category_not_allowed"); // 未設定なら従来どおり拒否
+  assert.equal(validateArticle(art, resolveCategories('{"extra_one":"追加1"}').all).ok, true);
+  const ep = { id: "daily:2026-10-11:extra_one", kind: "daily", date: "2026-10-11", category: "extra_one", headline: "h", data: {} };
+  assert.equal(validateEpisode(ep).error, "bad_episode_id");
+  assert.equal(validateEpisode(ep, resolveCategories('{"extra_one":"追加1"}').all).ok, true);
+});
+
+test("article query: collected_since and extra category filters", () => {
+  const all = resolveCategories('{"extra_one":"追加1"}').all;
+  assert.equal(buildArticleQuery(new URLSearchParams("category=extra_one")).error, "bad_category");
+  assert.equal(buildArticleQuery(new URLSearchParams("category=extra_one"), all).ok, true);
+  const q = buildArticleQuery(new URLSearchParams("collected_since=2026-10-01"));
+  assert.equal(q.ok, true);
+  assert.match(q.where, /substr\(collected_at, 1, 10\) >= \?/);
+  assert.equal(buildArticleQuery(new URLSearchParams("collected_since=soon")).error, "bad_collected_since");
 });

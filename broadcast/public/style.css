@@ -18,6 +18,10 @@
   --cat-game: #2f6fd6;
   --cat-gfx: #3d8a3a;
   --cat-se: #b03a82;
+  --cat-x1: #8a6d1d;
+  --cat-x2: #4b5563;
+  --cat-x3: #7f1d1d;
+  --cat-x4: #3f6212;
   --shadow: 0 8px 28px rgba(28, 26, 22, 0.12);
   --mono: "Space Mono", ui-monospace, monospace;
   --sans: "Noto Sans JP", system-ui, sans-serif;
@@ -39,6 +43,10 @@
     --cat-game: #6aa3ff;
     --cat-gfx: #79d37a;
     --cat-se: #ee7fc0;
+    --cat-x1: #d6b656;
+    --cat-x2: #a8b0bd;
+    --cat-x3: #e08a8a;
+    --cat-x4: #b5d36a;
     --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
   }
 }
@@ -57,6 +65,10 @@
   --cat-game: #6aa3ff;
   --cat-gfx: #79d37a;
   --cat-se: #ee7fc0;
+  --cat-x1: #d6b656;
+  --cat-x2: #a8b0bd;
+  --cat-x3: #e08a8a;
+  --cat-x4: #b5d36a;
   --shadow: 0 8px 28px rgba(0, 0, 0, 0.55);
 }
 
@@ -342,6 +354,19 @@ h1 em {
 }
 .dot.software_engineering {
   background: var(--cat-se);
+}
+/* 追加カテゴリ(任意)。基本の3色・紫(主操作)・シアン(新着)・橙(注意)と重ならない色 */
+.dot.x1 {
+  background: var(--cat-x1);
+}
+.dot.x2 {
+  background: var(--cat-x2);
+}
+.dot.x3 {
+  background: var(--cat-x3);
+}
+.dot.x4 {
+  background: var(--cat-x4);
 }
 .badge {
   font-size: 0.68rem;
@@ -1272,4 +1297,14 @@ table.plain td.num {
   .player {
     padding: 0.5rem 0.9rem;
   }
+}
+
+/* ---------- 追加の分野(任意) ---------- */
+.extra-lanes {
+  margin-top: 2rem;
+}
+.extra-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-muted);
 }
