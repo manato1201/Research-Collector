@@ -32,6 +32,7 @@ import {
   buildEpisodeQuery,
   isUrlHash,
   MAX_BODY_BYTES,
+  resolveCategories,
   validateBoardInput,
   validateIngest,
 } from "./validate.js";
@@ -111,6 +112,7 @@ async function route(request, env, url) {
 
   const reads = {
     "/api/articles": () => handleArticles(url, env),
+    "/api/categories": () => handleCategories(env),
     "/api/episodes": () => handleEpisodes(url, env),
     "/api/episodes/dates": () => handleEpisodeDates(url, env),
     "/api/status": () => handleStatus(env),
@@ -280,7 +282,7 @@ async function handleIngest(request, env) {
     return json({ error: "invalid_json" }, 400);
   }
 
-  const result = validateIngest(body);
+  const result = validateIngest(body, resolveCategories(env.EXTRA_CATEGORIES).all);
   if (!result.ok) return json({ error: result.error }, result.status);
 
   const now = new Date();
@@ -415,8 +417,17 @@ const rowToArticle = (r) => ({
   merged_into: r.merged_into,
 });
 
+/** 表示するカテゴリ(基本の3つ + 環境変数 EXTRA_CATEGORIES の追加分)。サイトはこれで画面を組み立てる。 */
+function handleCategories(env) {
+  const { extra } = resolveCategories(env.EXTRA_CATEGORIES);
+  return json({
+    base: ["game_dev_tech", "graphics_research", "software_engineering"],
+    extra: Object.entries(extra).map(([id, label]) => ({ id, label })),
+  });
+}
+
 async function handleArticles(url, env) {
-  const q = buildArticleQuery(url.searchParams);
+  const q = buildArticleQuery(url.searchParams, resolveCategories(env.EXTRA_CATEGORIES).all);
   if (!q.ok) return json({ error: q.error }, 400);
 
   const [list, count] = await Promise.all([
@@ -442,7 +453,7 @@ const rowToEpisode = (r) => ({
 });
 
 async function handleEpisodes(url, env) {
-  const q = buildEpisodeQuery(url.searchParams);
+  const q = buildEpisodeQuery(url.searchParams, resolveCategories(env.EXTRA_CATEGORIES).all);
   if (!q.ok) return json({ error: q.error }, 400);
 
   let date = q.date;

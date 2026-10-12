@@ -17,6 +17,11 @@ const LABELS = {
   graphics_research: "Graphics-Research",
   software_engineering: "Software-Engineering",
 };
+// 追加カテゴリ(任意)。Worker の設定(EXTRA_CATEGORIES)で与えられ、/api/categories で取得する。
+// 基本の3つ(CATEGORIES)は episode(日次・週次)の対象。追加分は記事の API から直接出す。
+let EXTRA = []; // [{id, label}]
+const allCategoryIds = () => [...CATEGORIES, ...EXTRA.map((e) => e.id)];
+
 const BOARD_LABELS = { reading: "読む", try: "試す", hold: "保留" };
 const BOARD_ORDER = ["reading", "try", "hold"];
 const STALE_HOURS = 20; // 12時間おきの実行。これを超えて取り込みが無ければ「止まっている可能性」と出す
@@ -106,7 +111,10 @@ function catLabel(c) {
   return LABELS[c] ?? c;
 }
 function dot(cat) {
-  return h("span", { class: `dot ${CATEGORIES.includes(cat) ? cat : ""}`, "aria-hidden": "true" });
+  // 基本の3つは固定色。追加分は、順番で x1〜x4 の色(丸 + 文字で区別する。色だけにしない)
+  const i = EXTRA.findIndex((e) => e.id === cat);
+  const cls = CATEGORIES.includes(cat) ? cat : i >= 0 ? `x${(i % 4) + 1}` : "";
+  return h("span", { class: `dot ${cls}`, "aria-hidden": "true" });
 }
 
 function toast(message, isError = false) {
@@ -170,6 +178,7 @@ async function api(path, { method = "GET", body } = {}) {
 const state = {
   board: new Map(), // url_hash -> {state, note}
   boardLoaded: false,
+  categoriesLoaded: false,
   session: { authenticated: false, via: null, login_enabled: false },
   status: null,
   statusAt: 0,
@@ -181,6 +190,14 @@ async function loadBoard(force = false) {
   const data = await api("/api/board");
   state.board = new Map(data.items.map((i) => [i.url_hash, { state: i.state, note: i.note }]));
   state.boardLoaded = true;
+}
+
+async function loadCategories() {
+  if (state.categoriesLoaded) return;
+  const res = await api("/api/categories");
+  EXTRA = res.extra ?? [];
+  for (const e of EXTRA) LABELS[e.id] = e.label;
+  state.categoriesLoaded = true;
 }
 
 async function loadStatus(force = false) {
@@ -522,11 +539,20 @@ async function pageHome(view, params) {
   view.replaceChildren(renderSkeleton());
   const wanted = params.get("d");
   const dateQuery = wanted && /^\d{4}-\d{2}-\d{2}$/.test(wanted) ? wanted : "latest";
-  const [{ date, episodes }, datesRes, watch, status] = await Promise.all([
+  const [{ date, episodes }, datesRes, watch, status, extraLanes] = await Promise.all([
     api(`/api/episodes?kind=daily&date=${dateQuery}`),
     api("/api/episodes/dates?kind=daily"),
     api("/api/watch").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { items: [] })),
     loadStatus().catch(() => null),
+    // 追加カテゴリは、直近7日に収集した記事を API から直接取る(episode は基本の3つだけ)
+    Promise.all(
+      EXTRA.map(async (e) => {
+        const res = await api(
+          `/api/articles?category=${e.id}&status=added&collected_since=${addDays(jstToday(), -6)}&limit=8`,
+        );
+        return { ...e, total: res.total, items: res.articles.map((a) => ({ ...a, other_categories: [] })) };
+      }),
+    ),
     loadBoard(),
   ]);
 
@@ -661,10 +687,44 @@ async function pageHome(view, params) {
     hl,
     picker,
     h("div", { class: "lanes" }, ...CATEGORIES.map((c) => laneEls[c])),
+    extraLanes.length ? buildExtraLanes(extraLanes) : null,
     watchBox,
   );
   applyMobile();
   countUp(view); // トップの動きは「カウントアップ」と「速報の流れ」の2種類(フェードインは使わない)
+}
+
+/** 追加カテゴリのレーン(直近7日に収集した記事)。基本の3レーンの下に、別の見出しで出す。 */
+function buildExtraLanes(lanes) {
+  const box = h(
+    "section",
+    { class: "extra-lanes", "aria-labelledby": "extra-title" },
+    h("h2", { id: "extra-title", class: "extra-title" }, "追加の分野(直近7日に収集)"),
+  );
+  const grid = h("div", { class: "lanes" });
+  for (const l of lanes) {
+    const lane = h(
+      "section",
+      { class: "lane", "aria-labelledby": `lane-${l.id}` },
+      h("div", { class: "lane-head" }, dot(l.id), h("h2", { id: `lane-${l.id}` }, l.label), h("span", { class: "lane-count num" }, String(l.total))),
+    );
+    if (l.items.length) {
+      lane.append(h("ul", { class: "list" }, ...l.items.map((a) => renderItem(a, { showCategoryBadge: false }))));
+      lane.append(
+        h(
+          "div",
+          { class: "lane-foot" },
+          readButton("このカテゴリを読み上げ", `${l.label}(直近7日)`, () => itemsToChapters(l.items)),
+          h("a", { class: "btn", href: `/c/${l.id}`, "data-link": "" }, `すべて見る(${l.total}件)`),
+        ),
+      );
+    } else {
+      lane.append(h("p", { class: "lane-headline" }, "直近7日の新着はありません"));
+    }
+    grid.append(lane);
+  }
+  box.append(grid);
+  return box;
 }
 
 // ------------------------------------------------------------------ ページ: カテゴリ
@@ -684,7 +744,7 @@ const PERIODS = [
 ];
 
 async function pageCategory(view, cat, params) {
-  if (!CATEGORIES.includes(cat)) return pageNotFound(view);
+  if (!allCategoryIds().includes(cat)) return pageNotFound(view);
   const period = PERIODS.some(([k]) => k === params.get("p")) ? params.get("p") : "week";
   const source = params.get("s");
   const onlyReview = params.get("r") === "1";
@@ -765,7 +825,7 @@ async function pageBoard(view, params) {
   state.board = new Map(data.items.map((i) => [i.url_hash, { state: i.state, note: i.note }]));
   state.boardLoaded = true;
 
-  const catFilter = CATEGORIES.includes(params.get("c")) ? params.get("c") : null;
+  const catFilter = allCategoryIds().includes(params.get("c")) ? params.get("c") : null;
   const visible = data.items.filter((it) => !catFilter || (it.article?.categories ?? []).includes(catFilter));
 
   const by = { reading: [], try: [], hold: [] };
@@ -815,7 +875,7 @@ async function pageBoard(view, params) {
       "div",
       { class: "row-controls", role: "group", "aria-label": "カテゴリで絞り込む" },
       chip("すべて", null),
-      ...CATEGORIES.map((c) => chip(catLabel(c), c)),
+      ...allCategoryIds().map((c) => chip(catLabel(c), c)),
     ),
     h("div", { class: "lanes" }, ...BOARD_ORDER.map(lane)),
   );
@@ -1169,7 +1229,7 @@ async function pageStatus(view) {
     kv([
       ["総数(URL単位)", h("span", { class: "num" }, String(s.articles.total))],
       ["要確認", h("span", { class: "num" }, String(s.articles.review))],
-      ...CATEGORIES.map((c) => [catLabel(c), h("span", { class: "num" }, String(s.articles.by_category[c] ?? 0))]),
+      ...allCategoryIds().map((c) => [catLabel(c), h("span", { class: "num" }, String(s.articles.by_category[c] ?? 0))]),
     ]),
   );
 
@@ -1316,6 +1376,9 @@ async function render() {
   document.title = `${route ? route.r.title : "見つかりません"} — Research Broadcast`;
 
   try {
+    if (url.pathname !== "/login") {
+      await loadCategories().catch((e) => (e instanceof AuthError ? Promise.reject(e) : undefined));
+    }
     if (!route) pageNotFound(view);
     else await route.r.run(view, route.m, url.searchParams);
   } catch (err) {
@@ -1423,6 +1486,8 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   state.session = { ...state.session, authenticated: false, via: null };
   state.board = new Map();
   state.boardLoaded = false;
+  state.categoriesLoaded = false;
+  EXTRA = [];
   state.status = null;
   player.stop();
   updateAuthUi();

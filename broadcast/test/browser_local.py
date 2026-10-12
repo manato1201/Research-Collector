@@ -66,7 +66,7 @@ with sync_playwright() as p:
     page.fill("#pw", PW)
     page.click("button[type=submit]")
     page.wait_for_selector(".lanes")
-    check("login leads to the home (lanes)", page.locator(".lane").count() == 3)
+    check("login leads to the home (3 base lanes)", page.locator(".lanes").first.locator(".lane").count() == 3)
     check("logout button is visible after login", page.locator("#logout-btn").is_visible())
     OUT and page.screenshot(path=os.path.join(OUT, "home_desktop.png"), full_page=True)
 
@@ -206,7 +206,21 @@ with sync_playwright() as p:
 
     page.goto(BASE + "/board")
     page.wait_for_selector(".lanes")
-    check("board: category filter chips", page.locator(".row-controls .chip").count() == 4)
+    n_extra = page.evaluate("fetch('/api/categories').then(r => r.json()).then(j => j.extra.length)")
+    check("board: category filter chips (all + base + extra)", page.locator(".row-controls .chip").count() == 4 + n_extra, (n_extra,))
+
+    if n_extra:
+        page.goto(BASE + "/")
+        page.wait_for_selector(".lanes")
+        check("home: extra category lanes (recent 7 days) under their own heading",
+              page.locator(".extra-lanes .lane").count() == n_extra and page.locator(".extra-lanes .lane .item").count() >= 1)
+        check("home: extra lane has a dot and a text label", page.locator(".extra-lanes .lane-head .dot").count() == n_extra)
+        page.locator(".extra-lanes .lane a.btn").first.click()
+        page.wait_for_selector(".seg")
+        check("extra category page renders with its label", "追加分野" in page.inner_text("h1"))
+        page.goto(BASE + "/status")
+        page.wait_for_selector(".panel")
+        check("status lists the extra category counts", "追加分野1" in page.inner_text("main"))
 
     page.goto(BASE + "/status")
     page.wait_for_selector(".panel")

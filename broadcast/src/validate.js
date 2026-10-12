@@ -11,6 +11,34 @@ export const CATEGORIES = [
 ];
 export const STATUSES = ["added", "failed", "merged"];
 
+// 追加カテゴリ(任意)。Worker の環境変数 EXTRA_CATEGORIES に、{"id": "表示名", ...} の JSON を入れる。
+// 値はリポジトリに置かない(wrangler secret put EXTRA_CATEGORIES)。未設定なら上の3つだけ。
+const EXTRA_ID_RE = /^[a-z][a-z0-9_]{1,31}$/;
+export const MAX_EXTRA_CATEGORIES = 8;
+
+/**
+ * @param {string | object | undefined} raw  EXTRA_CATEGORIES の値(JSON 文字列またはオブジェクト)
+ * @returns {{ all: string[], extra: Record<string, string> }}  all = 基本 + 追加の id。extra = 追加の id → 表示名
+ */
+export function resolveCategories(raw) {
+  const extra = {};
+  let obj = null;
+  try {
+    obj = typeof raw === "string" ? (raw.trim() ? JSON.parse(raw) : null) : (raw ?? null);
+  } catch {
+    obj = null; // 壊れた設定は無視する(基本の3つだけで動く)
+  }
+  if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+    for (const [id, label] of Object.entries(obj)) {
+      if (Object.keys(extra).length >= MAX_EXTRA_CATEGORIES) break;
+      if (EXTRA_ID_RE.test(id) && !CATEGORIES.includes(id) && typeof label === "string" && label.length >= 1 && label.length <= 40) {
+        extra[id] = label;
+      }
+    }
+  }
+  return { all: [...CATEGORIES, ...Object.keys(extra)], extra };
+}
+
 export const MAX_BODY_BYTES = 1_000_000;
 export const MAX_ARTICLES = 200;
 export const MAX_EPISODES = 20;
@@ -31,7 +59,7 @@ const isHttpUrl = (v) => isStr(v, 8, 2048) && /^https?:\/\//i.test(v);
  * 1件の記事を検証して、保存する形に整える。
  * @returns {{ok: true, value: object} | {ok: false, error: string}}
  */
-export function validateArticle(a) {
+export function validateArticle(a, categories = CATEGORIES) {
   if (a === null || typeof a !== "object" || Array.isArray(a))
     return { ok: false, error: "not_an_object" };
 
@@ -46,11 +74,11 @@ export function validateArticle(a) {
   if (
     !Array.isArray(a.categories) ||
     a.categories.length === 0 ||
-    a.categories.length > CATEGORIES.length
+    a.categories.length > categories.length
   ) {
     return { ok: false, error: "bad_categories" };
   }
-  if (!a.categories.every((c) => CATEGORIES.includes(c)))
+  if (!a.categories.every((c) => categories.includes(c)))
     return { ok: false, error: "category_not_allowed" };
 
   if (!STATUSES.includes(a.status)) return { ok: false, error: "bad_status" };
@@ -117,7 +145,7 @@ export function validateArticle(a) {
  * 取り込みのリクエスト本体を検証する。
  * @returns {{ok: false, status: number, error: string} | {ok: true, accepted: object[], rejected: {index:number,error:string}[], run: object}}
  */
-export function validateIngest(body) {
+export function validateIngest(body, categories = CATEGORIES) {
   if (body === null || typeof body !== "object" || Array.isArray(body))
     return { ok: false, status: 400, error: "body_must_be_an_object" };
   if (body.schema !== SCHEMA_VERSION)
@@ -164,7 +192,7 @@ export function validateIngest(body) {
   const rejected = [];
   const seen = new Set();
   articles.forEach((raw, index) => {
-    const r = validateArticle(raw);
+    const r = validateArticle(raw, categories);
     if (!r.ok) {
       rejected.push({ index, error: r.error });
     } else if (seen.has(r.value.url_hash)) {
@@ -198,7 +226,7 @@ export function validateIngest(body) {
   const episodes = [];
   const rejectedEpisodes = [];
   episodesIn.forEach((raw, index) => {
-    const r = validateEpisode(raw);
+    const r = validateEpisode(raw, categories);
     if (r.ok) episodes.push(r.value);
     else rejectedEpisodes.push({ index, error: r.error });
   });
@@ -215,7 +243,7 @@ export function validateIngest(body) {
   const reports = [];
   const rejectedReports = [];
   reportsIn.forEach((raw, index) => {
-    const r = validateReport(raw);
+    const r = validateReport(raw, categories);
     if (r.ok) reports.push(r.value);
     else rejectedReports.push({ index, error: r.error });
   });
@@ -242,13 +270,13 @@ export function validateIngest(body) {
  * GET /api/articles のクエリを、SQLと束縛値にする。
  * @returns {{ok: false, error: string} | {ok: true, where: string, params: any[], limit: number, offset: number}}
  */
-export function buildArticleQuery(searchParams) {
+export function buildArticleQuery(searchParams, categories = CATEGORIES) {
   const clauses = [];
   const params = [];
 
   const category = searchParams.get("category");
   if (category !== null) {
-    if (!CATEGORIES.includes(category))
+    if (!categories.includes(category))
       return { ok: false, error: "bad_category" };
     // 複数カテゴリの記事は、どのカテゴリで絞っても出る(設計 §2.2)
     clauses.push(
@@ -269,6 +297,14 @@ export function buildArticleQuery(searchParams) {
     if (!DATE_RE.test(since)) return { ok: false, error: "bad_since" };
     clauses.push("COALESCE(published, substr(collected_at, 1, 10)) >= ?");
     params.push(since);
+  }
+
+  // collected_since: 収集した日(JST ではなく UTC の日付)がその日以降。公開日が古い論文も「最近集めた」で拾える
+  const collectedSince = searchParams.get("collected_since");
+  if (collectedSince !== null) {
+    if (!DATE_RE.test(collectedSince)) return { ok: false, error: "bad_collected_since" };
+    clauses.push("substr(collected_at, 1, 10) >= ?");
+    params.push(collectedSince);
   }
 
   // until: その日まで(先月の表示など。since と組み合わせて範囲にする)
@@ -299,7 +335,9 @@ export function buildArticleQuery(searchParams) {
 
 // ------------------------------------------------------------------ episode(番組表)
 
-const EPISODE_ID_RE = /^(daily|weekly):([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-W[0-9]{2}):(all|game_dev_tech|graphics_research|software_engineering)$/;
+// カテゴリ id は、基本(定数)か、EXTRA_ID_RE を通ったものだけ。正規表現に入れても安全。
+const episodeIdRe = (categories) =>
+  new RegExp(`^(daily|weekly):([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-W[0-9]{2}):(all|${categories.join("|")})$`);
 
 /**
  * episode 1件の検証。id は `種別:日付:カテゴリ`(日次は YYYY-MM-DD、週次は YYYY-Www)で、
@@ -307,9 +345,9 @@ const EPISODE_ID_RE = /^(daily|weekly):([0-9]{4}-[0-9]{2}-[0-9]{2}|[0-9]{4}-W[0-
  * data の中身(記事の項目)は、サイト側が textContent / http(s) のリンクでしか使わない前提で、形だけ確認する。
  * @returns {{ok: true, value: object} | {ok: false, error: string}}
  */
-export function validateEpisode(e) {
+export function validateEpisode(e, categories = CATEGORIES) {
   if (e === null || typeof e !== "object" || Array.isArray(e)) return { ok: false, error: "not_an_object" };
-  const m = typeof e.id === "string" ? EPISODE_ID_RE.exec(e.id) : null;
+  const m = typeof e.id === "string" ? episodeIdRe(categories).exec(e.id) : null;
   if (!m) return { ok: false, error: "bad_episode_id" };
   const [, kind, date, cat] = m;
 
@@ -337,7 +375,7 @@ const REPORT_ID_RE = /^digest:(\d{4}-\d{2}-\d{2})$/;
  * セクションのカテゴリは3つの範囲内のみ(ローカル限定の分野は受け付けない)。
  * @returns {{ok: true, value: object} | {ok: false, error: string}}
  */
-export function validateReport(r) {
+export function validateReport(r, categories = CATEGORIES) {
   if (r === null || typeof r !== "object" || Array.isArray(r)) return { ok: false, error: "not_an_object" };
   const m = typeof r.id === "string" ? REPORT_ID_RE.exec(r.id) : null;
   if (!m) return { ok: false, error: "bad_report_id" };
@@ -351,12 +389,12 @@ export function validateReport(r) {
   if (generatedAt !== null && !(isStr(generatedAt, 20, 20) && DATETIME_RE.test(generatedAt)))
     return { ok: false, error: "bad_generated_at" };
 
-  if (!Array.isArray(r.sections) || r.sections.length === 0 || r.sections.length > CATEGORIES.length)
+  if (!Array.isArray(r.sections) || r.sections.length === 0 || r.sections.length > categories.length)
     return { ok: false, error: "bad_sections" };
   const sections = [];
   for (const s of r.sections) {
     if (s === null || typeof s !== "object") return { ok: false, error: "bad_section" };
-    if (!CATEGORIES.includes(s.category)) return { ok: false, error: "category_not_allowed" };
+    if (!categories.includes(s.category)) return { ok: false, error: "category_not_allowed" };
     if (!isStr(s.heading, 1, 100)) return { ok: false, error: "bad_heading" };
     if (!isStr(s.markdown, 1, 120_000)) return { ok: false, error: "bad_markdown" };
     sections.push({ category: s.category, heading: s.heading, markdown: s.markdown });
@@ -399,7 +437,7 @@ export function isUrlHash(v) {
 }
 
 /** GET /api/episodes のクエリ。 */
-export function buildEpisodeQuery(searchParams) {
+export function buildEpisodeQuery(searchParams, categories = CATEGORIES) {
   const kind = searchParams.get("kind") ?? "daily";
   if (!["daily", "weekly"].includes(kind)) return { ok: false, error: "bad_kind" };
 
@@ -407,7 +445,7 @@ export function buildEpisodeQuery(searchParams) {
   if (date !== "latest" && !(DATE_RE.test(date) || /^\d{4}-W\d{2}$/.test(date))) return { ok: false, error: "bad_date" };
 
   const category = searchParams.get("category");
-  if (category !== null && category !== "all" && !CATEGORIES.includes(category)) return { ok: false, error: "bad_category" };
+  if (category !== null && category !== "all" && !categories.includes(category)) return { ok: false, error: "bad_category" };
 
   return { ok: true, kind, date, category };
 }

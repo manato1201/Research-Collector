@@ -123,12 +123,13 @@ Content-Type: application/json
 | メソッド・パス | 認証 | 内容 |
 | --- | --- | --- |
 | `POST /api/ingest` | Bearer のみ | 取り込み。保持期間(既定90日)を過ぎた記事・日次 episode も、ここで削除する |
-| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD` / `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
+| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
 | `GET /api/episodes` | 同上 | `kind=daily\|weekly` / `date=latest\|YYYY-MM-DD\|YYYY-Www` / `category=all\|<カテゴリ>` |
 | `GET /api/episodes/dates` | 同上 | episode のある日付(最大60) |
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
 | `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
 | `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
+| `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
 | `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する |
 | `GET /api/health` | なし | 生存確認のみ。データは返さない |
@@ -157,11 +158,20 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。29項目)
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。32項目)
 - `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(80項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
 - `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(78項目。ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
 ---
+
+## 追加カテゴリ(任意)
+
+基本の3カテゴリのほかに、**Worker の環境変数 `EXTRA_CATEGORIES`**(`{"id": "表示名", …}` の JSON。id は小文字英数字と `_`、最大8つ)で、受け付けるカテゴリを足せる。
+
+- 値は**リポジトリに置かない**。`npx wrangler secret put EXTRA_CATEGORIES` で Cloudflare にだけ登録する(ローカルは `.dev.vars`)。
+- 未設定なら従来どおり3カテゴリだけを受け付け、それ以外は 422(これまでの隔離の保証は、設定した場合にのみ緩む)。
+- 追加分は episode(日次・週次)の対象外。ホームの「追加の分野(直近7日に収集)」と、`/c/<id>`・ボードの絞り込み・状態ページに出る。日次の「全体」の件数(`counts.total`)には含まれない。
+- 送信は、そのカテゴリを収集する側(`articles_log.json` に書かない運用のもの)が、`/api/ingest` へ直接行う。
 
 ## デプロイ
 
