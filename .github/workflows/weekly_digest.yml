@@ -48,8 +48,23 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: weekly-digest-${{ github.run_number }}
-          path: output/weekly_digest_*.md
+          path: |
+            output/weekly_digest_*.md
+            output/weekly_digest_*.json
           retention-days: 90
+
+      # 週次ダイジェストを ResearchBroadcast の「レポート」ページへ送る(任意の工程)。
+      # BROADCAST_INGEST_URL / BROADCAST_INGEST_TOKEN のSecretが無ければ何もしない。
+      # 失敗しても週次ダイジェスト自体には影響しない。同じ日付のレポートは上書きされる(冪等)。
+      - name: Send weekly digest to ResearchBroadcast (optional)
+        if: success()
+        continue-on-error: true
+        env:
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+          BROADCAST_INGEST_TOKEN: ${{ secrets.BROADCAST_INGEST_TOKEN }}
+          CF_ACCESS_CLIENT_ID: ${{ secrets.CF_ACCESS_CLIENT_ID }}
+          CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
+        run: python scripts/post_report.py "output/weekly_digest_*.md"
 
       - name: Update health status
         if: always()

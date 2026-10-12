@@ -14,8 +14,9 @@ continue-on-error)。受け手側は `url_hash` で upsert する設計なので
                              両方に対応できるようにしてある
 
 契約(schema 1): `broadcast/README.md` に、受け手側の仕様と一緒に書いてある。
-articles に加えて、任意の episodes(日次・週次の番組表。nbklm/episodes.py が生成)と
-failures(直近の実行で取得に失敗した収集元)を、最初のバッチに載せて送る。
+articles に加えて、任意の episodes(日次・週次の番組表。nbklm/episodes.py が生成)・
+failures(直近の実行で取得に失敗した収集元)・watch(配布サイトの新着。通知のみ)を、
+最初のバッチに載せて送る。週次ダイジェスト(レポート)は scripts/post_report.py が送る。
 
     python scripts/post_ingest.py [--since-hours 36] [--dry-run]
 """
@@ -85,8 +86,38 @@ def build_failures(health: dict) -> list[dict]:
     return out
 
 
+def build_watch(items: list[dict] | None) -> list[dict]:
+    """配布サイトの新着(collectors/watch_collector の recent)。http(s) のものを最大50件。"""
+    out = []
+    for it in items or []:
+        if not isinstance(it, dict):
+            continue
+        url = str(it.get("url", ""))
+        if not url.lower().startswith(("http://", "https://")):
+            continue
+        if not (it.get("watch") and it.get("title") and it.get("detected_at")):
+            continue
+        out.append({
+            "watch": str(it["watch"])[:40],
+            "title": str(it["title"])[:200],
+            "url": url[:2048],
+            "detected_at": str(it["detected_at"]),
+        })
+    return out[:50]
+
+
+def build_by_source(health: dict) -> dict:
+    """health.json の by_source(収集元ごとの取得件数)。名前は短く・件数は整数だけを通す。"""
+    raw = ((health or {}).get("daily", {}) or {}).get("by_source") or {}
+    out = {}
+    for name, n in list(raw.items())[:20]:
+        if isinstance(n, int) and not isinstance(n, bool) and 0 <= n <= 100000:
+            out[str(name)[:40]] = n
+    return out
+
+
 def build_batches(entries: list[dict], health: dict, now: datetime, since_hours: float = 36,
-                  episodes: list[dict] | None = None):
+                  episodes: list[dict] | None = None, watch: list[dict] | None = None):
     """
     Returns
     -------
@@ -108,6 +139,9 @@ def build_batches(entries: list[dict], health: dict, now: datetime, since_hours:
     run = {k: daily.get(k) for k in
            ("run_at", "collected", "new", "failed_sources", "unclassified", "merged", "notebooks_total")
            if daily.get(k) is not None}
+    by_source = build_by_source(health)
+    if by_source:
+        run["by_source"] = by_source
     sent_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
 
     batches = []
@@ -121,16 +155,20 @@ def build_batches(entries: list[dict], health: dict, now: datetime, since_hours:
 
     eps = [e for e in (episodes or []) if e.get("id")]
     failures = build_failures(health)
-    if (eps or failures) and not batches:
-        # 新しい記事が無くても、episode・失敗の状態は送る(受け口は articles が空でも受け付ける)
+    watch_items = build_watch(watch)
+    if (eps or failures or watch_items) and not batches:
+        # 新しい記事が無くても、episode・失敗・ウォッチの状態は送る(受け口は articles が空でも受け付ける)
         batches.append({"schema": SCHEMA_VERSION, "sent_at": sent_at, "run": run, "articles": []})
     if batches:
         if eps:
             batches[0]["episodes"] = eps
+        if watch_items:
+            batches[0]["watch"] = watch_items
         batches[0]["failures"] = failures
     return batches, {
         "articles": len(recent), "skipped_ineligible": skipped_ineligible,
         "batches": len(batches), "episodes": len(eps), "failures": len(failures),
+        "watch": len(watch_items),
     }
 
 
@@ -192,13 +230,22 @@ def main(argv=None) -> int:
 
     from nbklm import episodes as episodes_mod
 
+    try:
+        from collectors.watch_collector import recent as watch_recent
+        watch_items = watch_recent(limit=50)
+    except Exception as e:  # ウォッチは任意。取れなくても記事の送信は続ける
+        logger.warning(f"watch items unavailable: {e}")
+        watch_items = []
+
     now = datetime.now(timezone.utc)
     entries = articles_log.load()
     batches, stats = build_batches(
-        entries, health, now, args.since_hours, episodes=episodes_mod.build_for_run(entries, now)
+        entries, health, now, args.since_hours,
+        episodes=episodes_mod.build_for_run(entries, now), watch=watch_items,
     )
     logger.info(
-        f"ingest: {stats['articles']} articles, {stats['episodes']} episodes, {stats['failures']} failures "
+        f"ingest: {stats['articles']} articles, {stats['episodes']} episodes, {stats['watch']} watch items, "
+        f"{stats['failures']} failures "
         f"in {stats['batches']} batch(es) ({stats['skipped_ineligible']} skipped as not eligible)"
     )
     if args.dry_run or not batches:

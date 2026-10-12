@@ -10,7 +10,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from notebooklm import NotebookLMClient
@@ -239,11 +239,8 @@ REPORT_PROMPTS = {
     ),
 }
 
-CATEGORY_LABELS = {
-    "game_dev_tech":        "## 🎮 ゲーム開発・エンジン技術",
-    "graphics_research":    "## 🖥️ グラフィクス・レンダリング技術",
-    "software_engineering": "## 📄 ソフトウェア工学・論文",
-}
+# 見出しの定義は nbklm/digest.py(外部ライブラリ非依存。ResearchBroadcast へ送るレポートでも使う)
+from .digest import CATEGORY_LABELS, render_digest_markdown  # noqa: E402
 
 
 def _run_cli(args: list[str], timeout: int = 300) -> tuple[bool, str]:
@@ -322,10 +319,11 @@ def _generate_report_for_notebook(nb_id: str, category: str) -> Optional[str]:
         return None
 
 
-async def generate_weekly_digest_async() -> Optional[str]:
+async def generate_weekly_digest_parts_async() -> Optional[dict]:
     """
     当週の3つの収集ノートブックを参照してカテゴリ別レポートを生成し、
-    1本の日本語Markdownにまとめて返す。
+    構造化した結果(parts)で返す。Markdown にするのは nbklm/digest.render_digest_markdown。
+    当週のノートブックが1つも無い(週の最初の日で、まだ記事を追加していない等)ときは、先週のものを使う。
     """
     year, week = _weekly_label()
 
@@ -335,6 +333,11 @@ async def generate_weekly_digest_async() -> Optional[str]:
     # 当週ノートブックのIDを取得
     async with await _make_client() as client:
         nb_ids = await _get_weekly_notebook_ids(client, year, week)
+        if not nb_ids:
+            prev_year, prev_week, _ = (datetime.now() - timedelta(days=7)).isocalendar()
+            year, week = str(prev_year), f"W{prev_week:02d}"
+            logger.warning(f"[NotebookLM] no notebooks for this week; falling back to {year}-{week}")
+            nb_ids = await _get_weekly_notebook_ids(client, year, week)
 
     if not nb_ids:
         logger.error("[NotebookLM] no weekly notebooks found for this week")
@@ -342,32 +345,43 @@ async def generate_weekly_digest_async() -> Optional[str]:
 
     logger.info(f"[NotebookLM] generating digest from {len(nb_ids)} notebooks")
 
-    # カテゴリ別にレポートを生成してまとめる
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    sections = [
-        f"# 週次リサーチダイジェスト — {year}-{week}（{date_str}）\n",
-        "> **収集ノートブック:** "
-        + "、".join(_weekly_name(c, year, week) for c in nb_ids)
-        + "\n",
-        "> **生成日時:** " + datetime.now().strftime("%Y年%m月%d日 %H:%M") + "\n",
-    ]
+    now = datetime.now()
+    parts = {
+        "year": year,
+        "week": week,
+        "date": now.strftime("%Y-%m-%d"),
+        "generated_label": now.strftime("%Y年%m月%d日 %H:%M"),
+        # 実行環境(Actions)は UTC。ローカルで実行した場合の時刻ずれは、表示用の補助情報なので許容する
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "notebooks": [_weekly_name(c, year, week) for c in nb_ids],
+        "sections": [],
+    }
 
+    # カテゴリ別にレポートを生成してまとめる
     for category, nb_id in nb_ids.items():
         label = CATEGORY_LABELS.get(category, f"## {category}")
         nb_name = _weekly_name(category, year, week)
         logger.info(f"[NotebookLM] generating report: {nb_name}")
 
         report = _generate_report_for_notebook(nb_id, category)
-        if report:
-            sections.append(f"\n{label}\n")
-            sections.append(report)
-        else:
-            sections.append(f"\n{label}\n")
-            sections.append(f"> ⚠️ {nb_name} のレポート生成に失敗しました\n")
+        body = report if report else f"> ⚠️ {nb_name} のレポート生成に失敗しました\n"
+        parts["sections"].append({"category": category, "label": label, "body": body})
 
-    full_report = "\n".join(sections)
+    return parts
+
+
+async def generate_weekly_digest_async() -> Optional[str]:
+    """上の parts を、従来と同じ1本の日本語Markdownにして返す。"""
+    parts = await generate_weekly_digest_parts_async()
+    if parts is None:
+        return None
+    full_report = render_digest_markdown(parts)
     logger.info(f"[NotebookLM] digest complete ({len(full_report)} chars total)")
     return full_report
+
+
+def generate_weekly_digest_parts() -> Optional[dict]:
+    return asyncio.run(generate_weekly_digest_parts_async())
 
 
 def generate_weekly_digest() -> Optional[str]:
