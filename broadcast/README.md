@@ -123,7 +123,7 @@ Content-Type: application/json
 | メソッド・パス | 認証 | 内容 |
 | --- | --- | --- |
 | `POST /api/ingest` | Bearer のみ | 取り込み。保持期間(既定90日)を過ぎた記事・日次 episode も、ここで削除する |
-| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
+| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD` / `collected_until=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
 | `GET /api/episodes` | 同上 | `kind=daily\|weekly` / `date=latest\|YYYY-MM-DD\|YYYY-Www` / `category=all\|<カテゴリ>` |
 | `GET /api/episodes/dates` | 同上 | episode のある日付(最大60) |
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
@@ -158,7 +158,7 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。32項目)
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。33項目)
 - `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(80項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
 - `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(78項目。ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
