@@ -24,7 +24,7 @@
   },
   "weekly": {
     "status": "error",
-    "run_at": "2026-10-05T09:00:54Z",
+    "run_at": "2026-10-12T09:00:55Z",
     "error": "digest generation failed"
   }
 }
