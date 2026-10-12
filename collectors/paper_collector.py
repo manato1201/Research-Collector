@@ -15,6 +15,7 @@ import urllib.request
 import json
 from datetime import datetime, timezone
 
+from ._academic_api import S2_GIVE_UP_AFTER, S2RateLimited, fetch_json_s2
 from .retry import record_failure, retry
 
 logger = logging.getLogger(__name__)
@@ -70,14 +71,9 @@ def _url_hash(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-@retry(times=3, base_delay=2.0)
-def _fetch_json(url: str, timeout: int = 15) -> dict:
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": "research-collector/1.0 (graduation thesis bot)"},
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        return json.loads(resp.read().decode("utf-8"))
+def _fetch_json(url: str, timeout: int = 20) -> dict:
+    """Semantic Scholar の取得。429 は待って再試行する(collectors/_academic_api.fetch_json_s2)。"""
+    return fetch_json_s2(url, timeout=timeout)
 
 
 @retry(times=3, base_delay=2.0)
@@ -285,8 +281,16 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
     """Semantic Scholar APIから論文を収集する（APIキー不要）"""
     articles = []
     seen_hashes = set()
+    gave_up = 0       # 再試行を使い切った失敗(429)の連続回数
+    skipped = 0
 
-    for query in SEMANTIC_SCHOLAR_QUERIES:
+    for i, query in enumerate(SEMANTIC_SCHOLAR_QUERIES):
+        if gave_up >= S2_GIVE_UP_AFTER:
+            # レート制限が続いているときは残りを打ち切り、失敗を1件にまとめて記録する(7件の同じ失敗を並べない)
+            skipped = len(SEMANTIC_SCHOLAR_QUERIES) - i
+            logger.warning(f"[S2] rate limited — skipping the remaining {skipped} queries")
+            record_failure("semantic_scholar", f"rate limited (HTTP 429): {skipped} queries skipped")
+            break
         params = urllib.parse.urlencode({
             "query":  query,
             "limit":  max_per_query,
@@ -296,9 +300,11 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
 
         try:
             data = _fetch_json(url)
+            gave_up = 0
         except Exception as e:
             logger.warning(f"[S2] fetch failed after retries: {url[:80]} → {e}")
             record_failure(f"semantic_scholar:{query[:40]}", e)
+            gave_up = gave_up + 1 if isinstance(e, S2RateLimited) else 0
             continue
 
         papers = data.get("data", [])

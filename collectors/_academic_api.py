@@ -11,8 +11,10 @@ paper_collector.py と、ローカル限定の新分野コレクター
 import hashlib
 import json
 import logging
+import os
 import re
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -37,6 +39,74 @@ def fetch_json(url: str, timeout: int = 15) -> dict:
     req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
+
+
+# ---- Semantic Scholar: レート制限(HTTP 429)への対応 ---------------------------------
+# APIキー無しの利用は、全利用者で共有の枠に入るため 429 が出やすい(直近の実行で7クエリが失敗した)。
+#  - 呼び出しの間隔を空ける(S2_MIN_INTERVAL)
+#  - 429 / 5xx は Retry-After(無ければ 5・10・20・40 秒)だけ待って再試行する
+#  - 環境変数 SEMANTIC_SCHOLAR_API_KEY(無料で申請できる)があれば x-api-key で送る
+#  - 429 が続いたときは、残りのクエリを打ち切る(S2RateLimited。呼び出し側で扱う)
+S2_API_KEY_ENV = "SEMANTIC_SCHOLAR_API_KEY"
+S2_MIN_INTERVAL = 1.2
+S2_MAX_ATTEMPTS = 5
+S2_MAX_DELAY = 60.0
+S2_GIVE_UP_AFTER = 3  # 再試行を使い切った失敗が、この回数だけ続いたら打ち切る
+
+_s2_last_call = 0.0
+
+
+class S2RateLimited(Exception):
+    """レート制限が続いて、再試行を使い切った。"""
+
+
+def _retry_delay(err: "urllib.error.HTTPError", attempt: int) -> float:
+    ra = err.headers.get("Retry-After") if getattr(err, "headers", None) else None
+    try:
+        if ra is not None:
+            return min(S2_MAX_DELAY, max(1.0, float(ra)))
+    except (TypeError, ValueError):
+        pass
+    return min(S2_MAX_DELAY, 5.0 * (2 ** (attempt - 1)))
+
+
+def fetch_json_s2(url: str, timeout: int = 20) -> dict:
+    """Semantic Scholar 用の取得。429 / 5xx は待って再試行し、使い切ったら S2RateLimited(429のとき)を送出する。"""
+    global _s2_last_call
+    headers = {"User-Agent": _USER_AGENT}
+    key = os.environ.get(S2_API_KEY_ENV, "").strip()
+    if key:
+        headers["x-api-key"] = key
+
+    last_err: Exception | None = None
+    for attempt in range(1, S2_MAX_ATTEMPTS + 1):
+        wait = S2_MIN_INTERVAL - (time.monotonic() - _s2_last_call)
+        if wait > 0:
+            time.sleep(wait)
+        _s2_last_call = time.monotonic()
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (429, 500, 502, 503, 504) and attempt < S2_MAX_ATTEMPTS:
+                delay = _retry_delay(e, attempt)
+                logger.warning(f"[S2] HTTP {e.code} (attempt {attempt}/{S2_MAX_ATTEMPTS}) — retrying in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            if e.code == 429:
+                raise S2RateLimited(f"HTTP 429 after {attempt} attempts") from e
+            raise
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt < S2_MAX_ATTEMPTS:
+                delay = min(S2_MAX_DELAY, 2.0 * (2 ** (attempt - 1)))
+                logger.warning(f"[S2] {e} (attempt {attempt}/{S2_MAX_ATTEMPTS}) — retrying in {delay:.0f}s")
+                time.sleep(delay)
+                continue
+            raise
+    raise last_err or RuntimeError("fetch_json_s2 failed")
 
 
 @retry(times=3, base_delay=2.0)
@@ -267,8 +337,12 @@ def semantic_scholar_search(
     """クエリ群でSemantic Scholarを検索する（APIキー不要）"""
     articles = []
     seen = set()
+    gave_up = 0  # 再試行を使い切った失敗の連続回数
 
     for query in queries:
+        if gave_up >= S2_GIVE_UP_AFTER:
+            logger.warning(f"[S2:{source_type}] rate limited — skipping the remaining queries")
+            break
         params = urllib.parse.urlencode({
             "query":  query,
             "limit":  max_per_query,
@@ -276,9 +350,11 @@ def semantic_scholar_search(
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"
         try:
-            data = fetch_json(url)
+            data = fetch_json_s2(url)
+            gave_up = 0
         except Exception as e:
             logger.warning(f"[S2:{source_type}] fetch failed: {url[:80]} → {e}")
+            gave_up = gave_up + 1 if isinstance(e, S2RateLimited) else 0
             continue
 
         papers = data.get("data", []) or []

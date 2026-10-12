@@ -40,6 +40,8 @@ jobs:
           NOTEBOOKLM_WEEKLY_DIGEST_ID: ${{ secrets.NOTEBOOKLM_WEEKLY_DIGEST_ID }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # 任意。あれば Semantic Scholar の検索に付ける(無料で申請できる。無いと共有枠で 429 が出やすい)
+          SEMANTIC_SCHOLAR_API_KEY: ${{ secrets.SEMANTIC_SCHOLAR_API_KEY }}
         run: python main.py --mode daily
 
       - name: Upload logs
