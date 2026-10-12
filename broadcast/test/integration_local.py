@@ -196,7 +196,8 @@ multi = [a for a in arts if len(a["categories"]) > 1]
 check("multi-category articles exist in the data", len(multi) > 0)
 check("sum of per-category counts exceeds URL total (multi-category appear in both lanes)",
       sum(by_cat.values()) > total["total"], (by_cat, total))
-check("status by_category matches /api/articles?category=", total["by_category"] == {k: v for k, v in by_cat.items() if v}, (total["by_category"], by_cat))
+base_counts = {k: v for k, v in total["by_category"].items() if k in by_cat}  # 追加カテゴリ(あれば)は別に見る
+check("status by_category matches /api/articles?category=", base_counts == {k: v for k, v in by_cat.items() if v}, (total["by_category"], by_cat))
 check("category lane contains only that category",
       all("graphics_research" in a["categories"] for a in call("GET", "/api/articles?category=graphics_research&limit=200")[1]["articles"]))
 check("bad category -> 400", call("GET", "/api/articles?category=unknown_category")[0] == 400)

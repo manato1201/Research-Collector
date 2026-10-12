@@ -300,3 +300,9 @@ test("article query: collected_since and extra category filters", () => {
   assert.match(q.where, /substr\(collected_at, 1, 10\) >= \?/);
   assert.equal(buildArticleQuery(new URLSearchParams("collected_since=soon")).error, "bad_collected_since");
 });
+
+test("article query: collected_until makes a collected-date range", () => {
+  const q = buildArticleQuery(new URLSearchParams("collected_since=2026-09-01&collected_until=2026-09-30"));
+  assert.deepEqual(q.params, ["2026-09-01", "2026-09-30"]);
+  assert.equal(buildArticleQuery(new URLSearchParams("collected_until=x")).error, "bad_collected_until");
+});
