@@ -140,6 +140,79 @@ with sync_playwright() as p:
     txt = page.inner_text("main")
     check("status: shows ingest + counts", "取り込み" in txt and "総数" in txt)
 
+    # --- 読み上げ(再生バー)・速報・ウォッチ・レポート・先月・折れ線・ボトムシート
+    page.goto(BASE + "/")
+    page.wait_for_selector(".lanes")
+    page.wait_for_timeout(300)
+    read_all = page.locator("button.read-btn", has_text="全体を読み上げ")
+    check("home: read-aloud button exists", read_all.count() == 1)
+    check("home: read-aloud button is enabled (or explains why not)",
+          read_all.is_enabled() or bool(read_all.get_attribute("title")))
+    check("home: per-category read buttons", page.locator("button.read-btn", has_text="このカテゴリを読み上げ").count() >= 1)
+    if read_all.is_enabled():
+        read_all.click()
+        page.wait_for_selector("#player:not([hidden])", timeout=5000)
+        check("player bar appears with title and chapter", "放送" in page.inner_text("#player-title") and page.inner_text("#player-progress").startswith("1 /"))
+        check("play button toggles to pause label", page.inner_text("#player-toggle") in ("一時停止", "再生"))
+        page.click("#player-next")
+        check("next chapter moves the progress", page.inner_text("#player-progress").startswith("2 /") or page.locator("#player").is_hidden())
+        page.click("#player-toggle")
+        check("pause shows the resume label", page.inner_text("#player-toggle") == "再生" or page.locator("#player").is_hidden())
+        check("read button shows stop while the player is open", page.locator("button.read-btn[aria-pressed=true]").count() >= 0)
+        page.click("#player-stop")
+        check("stop hides the player bar", page.locator("#player").is_hidden())
+    ticker = page.locator(".ticker")
+    check("home: ticker present with items", ticker.count() == 1 and ticker.locator("a").count() >= 2)
+    page.click(".ticker-toggle")
+    check("ticker can be stopped", ticker.get_attribute("data-paused") == "true")
+    check("home: watch accordion lists new distribution items", page.locator("details.watch-list li").count() >= 1)
+    check("home: link to the latest report", page.locator("a.btn", has_text="最新のレポート").count() == 1)
+
+    page.goto(BASE + "/reports")
+    page.wait_for_selector(".report-card")
+    check("reports: list shows the digest card", page.locator(".report-card").count() >= 1)
+    page.click(".report-card >> nth=0")
+    page.wait_for_selector(".md")
+    check("report: sections rendered as markdown", page.locator(".md strong").count() >= 1 and page.locator(".md ul li").count() >= 1)
+    check("report: markdown links are external + noopener",
+          page.locator(".md a[href^='https://unity.com']").count() == 1
+          and "noopener" in (page.get_attribute(".md a[href^='https://unity.com']", "rel") or ""))
+    check("report: no script/img elements from markdown", page.locator(".md script").count() == 0 and page.locator(".md img").count() == 0)
+    check("report: javascript: links are not links", page.locator(".md a[href^='javascript']").count() == 0)
+    check("report: raw html is shown as text", "<img" in page.inner_text("main"))
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    page.wait_for_timeout(200)
+    check("report: reading progress bar fills while scrolling", page.evaluate("document.getElementById('progress-bar').offsetWidth") > 0)
+    check("report: breadcrumb and read button", page.locator("nav.crumbs").count() == 1 and page.locator("button.read-btn", has_text="レポートを読み上げ").count() == 1)
+    page.goto(BASE + "/reports/digest:2026-10-11")  # 直接開く(サーバーが ":" を %3A に直しても描画される)
+    page.wait_for_selector(".md")
+    check("report: direct URL renders", page.locator(".md").count() >= 1 and "見つかりません" not in page.inner_text("main"))
+
+    page.goto(BASE + "/c/game_dev_tech")
+    page.wait_for_selector(".seg")
+    check("category: 先月 period exists", page.locator(".seg button", has_text="先月").count() == 1)
+    page.click(".seg button:has-text('先月')")
+    page.wait_for_url(re.compile(r"p=month"))
+    page.wait_for_selector(".seg")
+    check("category: 先月 shows a range (until)", " 〜 20" in page.inner_text("main"))
+    check("category: controls are sticky", page.evaluate("getComputedStyle(document.querySelector('.sticky-controls')).position") == "sticky")
+    check("category: read-aloud for the page", page.locator("button.read-btn", has_text="このページを読み上げ").count() == 1)
+
+    page.goto(BASE + "/weekly")
+    page.wait_for_selector(".fig .line")
+    check("weekly: trend is a line with points", page.locator(".fig .line").count() == 1 and page.locator(".fig .pt").count() == 7)
+    check("weekly: line is drawn when it becomes visible", "draw" in (page.get_attribute(".fig .line", "class") or ""))
+    check("weekly: breadcrumb", page.locator("nav.crumbs").count() == 1)
+
+    page.goto(BASE + "/board")
+    page.wait_for_selector(".lanes")
+    check("board: category filter chips", page.locator(".row-controls .chip").count() == 4)
+
+    page.goto(BASE + "/status")
+    page.wait_for_selector(".panel")
+    check("status: per-source counts and report/watch counts shown",
+          "収集元ごとの取得件数" in page.inner_text("main") and "ウォッチ" in page.inner_text("main"))
+
     # --- テーマ
     before = page.evaluate("document.documentElement.getAttribute('data-theme')")
     page.click("#theme-btn")
@@ -164,6 +237,18 @@ with sync_playwright() as p:
     m.locator(".lane-picker button").nth(1).click()
     check("mobile: lane picker switches lane", m.locator(".lane").nth(1).is_visible())
     OUT and m.screenshot(path=os.path.join(OUT, "home_mobile.png"), full_page=True)
+    m.locator(".item-title").first.click()
+    m.wait_for_selector("#drawer:not([hidden])")
+    box = m.evaluate("(() => { const r = document.getElementById('drawer').getBoundingClientRect(); return {l: r.left, w: r.width, b: r.bottom, vh: window.innerHeight, vw: window.innerWidth}; })()")
+    check("mobile: drawer is a bottom sheet (full width, anchored to the bottom)",
+          abs(box["w"] - box["vw"]) < 2 and abs(box["b"] - box["vh"]) < 2, box)
+    m.keyboard.press("Escape")
+    m.goto(BASE + "/reports")
+    m.wait_for_selector(".report-card")
+    check("mobile /reports: no horizontal overflow", overflow(m) <= 0, overflow(m))
+    m.click(".report-card >> nth=0")
+    m.wait_for_selector(".md")
+    check("mobile report: no horizontal overflow", overflow(m) <= 0, overflow(m))
 
     # --- reduced motion
     rm = browser.new_context(viewport={"width": 1280, "height": 900}, reduced_motion="reduce", locale="ja-JP")

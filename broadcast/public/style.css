@@ -649,7 +649,7 @@ h1 em {
 }
 .toc {
   position: sticky;
-  top: 7rem;
+  top: calc(var(--top-h, 5rem) + 1rem);
   align-self: start;
   display: flex;
   flex-direction: column;
@@ -887,4 +887,389 @@ select.btn {
 }
 .drawer-body .board-state {
   flex-wrap: wrap;
+}
+
+/* ---------- 補助 ---------- */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.icon-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.icon-btn:disabled,
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.read-btn {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+}
+.read-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.tool-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* ---------- 再生バー(読み上げ) ---------- */
+.player {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 45;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  padding: 0.6rem 1.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  align-items: center;
+}
+.player-info {
+  display: flex;
+  gap: 0.6rem;
+  align-items: baseline;
+  flex-wrap: wrap;
+  min-width: 0;
+  flex: 1 1 14rem;
+  font-size: 0.82rem;
+}
+.player-info b {
+  font-weight: 700;
+}
+.player-info #player-chapter {
+  color: var(--text-muted);
+}
+.player-info #player-progress {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+.player-controls {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.player-sel select {
+  font: inherit;
+  font-size: 0.72rem;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+  max-width: 11rem;
+}
+.player-note {
+  flex-basis: 100%;
+  font-size: 0.72rem;
+  color: var(--warn);
+}
+body.has-player main {
+  padding-bottom: 7rem;
+}
+body.has-player .toasts {
+  bottom: 6.5rem;
+}
+
+/* ---------- 速報ティッカー(停止できる) ---------- */
+.ticker {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  margin-top: 1.25rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.ticker-label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  padding: 0.5rem 0.8rem;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+.ticker-view {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+.ticker-track {
+  display: inline-flex;
+  white-space: nowrap;
+  font-size: 0.85rem;
+  animation: ticker-scroll 60s linear infinite;
+}
+.ticker-set {
+  display: inline-flex;
+  gap: 2.5rem;
+  padding: 0 2.5rem 0 1.25rem;
+}
+.ticker-track a {
+  text-decoration: none;
+}
+.ticker-track a:hover {
+  text-decoration: underline;
+  color: var(--accent);
+}
+.ticker[data-paused="true"] .ticker-track,
+.ticker:hover .ticker-track,
+.ticker:focus-within .ticker-track {
+  animation-play-state: paused;
+}
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+.ticker-toggle {
+  border: 0;
+  border-left: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+    white-space: normal;
+  }
+  .ticker-set {
+    flex-wrap: wrap;
+    gap: 0.4rem 1.5rem;
+    padding: 0.5rem 1.25rem;
+  }
+  .ticker-dup,
+  .ticker-toggle {
+    display: none;
+  }
+}
+
+/* ---------- 読み進めの進捗バー(レポート) ---------- */
+.progress-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  height: 3px;
+  width: 0;
+  background: var(--accent);
+  z-index: 70;
+}
+
+/* ---------- 上部に固定するコントロール ---------- */
+.sticky-controls {
+  position: sticky;
+  top: var(--top-h, 5rem);
+  z-index: 10;
+  background: var(--bg);
+  padding: 0.5rem 0;
+  margin: 0.5rem 0;
+}
+
+/* ---------- レポート ---------- */
+.report-list {
+  list-style: none;
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+.report-card {
+  display: grid;
+  gap: 0.2rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  text-decoration: none;
+}
+.report-card:hover {
+  border-color: var(--accent);
+}
+.report-card b {
+  font-weight: 700;
+}
+.report-card .meta {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  align-items: center;
+}
+.md {
+  font-size: 0.92rem;
+  line-height: 1.85;
+  overflow-wrap: anywhere;
+}
+.md > * + * {
+  margin-top: 0.8rem;
+}
+.md .md-h {
+  font-weight: 700;
+  margin-top: 1.4rem;
+  line-height: 1.5;
+}
+.md h3 {
+  font-size: 1.05rem;
+}
+.md h4 {
+  font-size: 0.98rem;
+}
+.md h5,
+.md h6 {
+  font-size: 0.9rem;
+}
+.md ul,
+.md ol {
+  padding-left: 1.4rem;
+}
+.md li + li {
+  margin-top: 0.25rem;
+}
+.md blockquote {
+  border-left: 3px solid var(--border);
+  padding-left: 0.9rem;
+  color: var(--text-muted);
+}
+.md code {
+  font-family: var(--mono);
+  font-size: 0.82em;
+  background: var(--surface2);
+  border-radius: 4px;
+  padding: 0.05rem 0.3rem;
+}
+.md pre {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 0.8rem 1rem;
+  overflow-x: auto;
+}
+.md pre code {
+  background: none;
+  padding: 0;
+}
+.md a {
+  color: var(--accent);
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.md-table-wrap {
+  overflow-x: auto;
+}
+.md-table {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--border);
+  padding: 0.35rem 0.7rem;
+  text-align: left;
+}
+.md-table th {
+  background: var(--surface2);
+}
+.report-meta {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+}
+
+/* ---------- 週次の折れ線(線が引かれる) ---------- */
+.fig .line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.fig .pt {
+  fill: var(--accent);
+}
+.fig .line.draw {
+  animation: line-draw 1.1s ease-out both;
+}
+@keyframes line-draw {
+  from {
+    stroke-dashoffset: var(--len, 600);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fig .line.draw {
+    animation: none;
+  }
+}
+
+/* ---------- ウォッチ・状態の一覧 ---------- */
+.watch-list a {
+  text-decoration: none;
+}
+.watch-list a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.watch-list time {
+  color: var(--text-muted);
+  margin-right: 0.6rem;
+  font-size: 0.72rem;
+}
+table.plain {
+  border-collapse: collapse;
+  font-size: 0.85rem;
+  width: 100%;
+}
+table.plain th,
+table.plain td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+table.plain td.num {
+  text-align: right;
+}
+
+/* ---------- スマホ: ドロワーはボトムシート ---------- */
+@media (max-width: 560px) {
+  .drawer {
+    top: auto;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-height: 85vh;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    border-radius: 16px 16px 0 0;
+  }
+  .player {
+    padding: 0.5rem 0.9rem;
+  }
 }

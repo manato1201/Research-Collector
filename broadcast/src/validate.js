@@ -15,6 +15,9 @@ export const MAX_BODY_BYTES = 1_000_000;
 export const MAX_ARTICLES = 200;
 export const MAX_EPISODES = 20;
 export const MAX_EPISODE_BYTES = 200_000;
+export const MAX_REPORTS = 5;
+export const MAX_REPORT_BYTES = 300_000;
+export const MAX_WATCH = 50;
 
 const HASH_RE = /^[0-9a-f]{16}$/;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -136,7 +139,25 @@ export function validateIngest(body) {
   if (failuresIn !== null && !Array.isArray(failuresIn))
     return { ok: false, status: 400, error: "failures_must_be_an_array" };
 
-  if (articles.length === 0 && episodesIn.length === 0 && failuresIn === null)
+  const reportsIn = body.reports ?? [];
+  if (!Array.isArray(reportsIn))
+    return { ok: false, status: 400, error: "reports_must_be_an_array" };
+  if (reportsIn.length > MAX_REPORTS)
+    return { ok: false, status: 413, error: "too_many_reports" };
+
+  const watchIn = body.watch ?? [];
+  if (!Array.isArray(watchIn))
+    return { ok: false, status: 400, error: "watch_must_be_an_array" };
+  if (watchIn.length > MAX_WATCH)
+    return { ok: false, status: 413, error: "too_many_watch_items" };
+
+  if (
+    articles.length === 0 &&
+    episodesIn.length === 0 &&
+    reportsIn.length === 0 &&
+    watchIn.length === 0 &&
+    failuresIn === null
+  )
     return { ok: false, status: 400, error: "nothing_to_ingest" };
 
   const accepted = [];
@@ -164,6 +185,15 @@ export function validateIngest(body) {
       )
         run[k] = v;
     }
+    // 収集元ごとの取得件数(health.json の by_source)。名前は短く・件数は整数・20件まで
+    const bs = body.run.by_source;
+    if (bs && typeof bs === "object" && !Array.isArray(bs)) {
+      const out = {};
+      for (const [name, n] of Object.entries(bs).slice(0, 20)) {
+        if (isStr(name, 1, 40) && Number.isInteger(n) && n >= 0 && n <= 100000) out[name] = n;
+      }
+      run.by_source = out;
+    }
   }
   const episodes = [];
   const rejectedEpisodes = [];
@@ -182,7 +212,30 @@ export function validateIngest(body) {
           .slice(0, 20)
           .map((f) => ({ source: f.source, error: isStr(f.error, 0, 200) ? f.error : "" }));
 
-  return { ok: true, accepted, rejected, run, episodes, rejectedEpisodes, failures };
+  const reports = [];
+  const rejectedReports = [];
+  reportsIn.forEach((raw, index) => {
+    const r = validateReport(raw);
+    if (r.ok) reports.push(r.value);
+    else rejectedReports.push({ index, error: r.error });
+  });
+
+  const watch = [];
+  const rejectedWatch = [];
+  const seenWatch = new Set();
+  watchIn.forEach((raw, index) => {
+    const r = validateWatchItem(raw);
+    if (!r.ok) rejectedWatch.push({ index, error: r.error });
+    else if (!seenWatch.has(r.value.url)) {
+      seenWatch.add(r.value.url);
+      watch.push(r.value);
+    }
+  });
+
+  return {
+    ok: true, accepted, rejected, run, episodes, rejectedEpisodes, failures,
+    reports, rejectedReports, watch, rejectedWatch,
+  };
 }
 
 /**
@@ -216,6 +269,14 @@ export function buildArticleQuery(searchParams) {
     if (!DATE_RE.test(since)) return { ok: false, error: "bad_since" };
     clauses.push("COALESCE(published, substr(collected_at, 1, 10)) >= ?");
     params.push(since);
+  }
+
+  // until: その日まで(先月の表示など。since と組み合わせて範囲にする)
+  const until = searchParams.get("until");
+  if (until !== null) {
+    if (!DATE_RE.test(until)) return { ok: false, error: "bad_until" };
+    clauses.push("COALESCE(published, substr(collected_at, 1, 10)) <= ?");
+    params.push(until);
   }
 
   if (searchParams.get("review") === "1") clauses.push("review = 1");
@@ -265,6 +326,57 @@ export function validateEpisode(e) {
   if (json.length > MAX_EPISODE_BYTES) return { ok: false, error: "data_too_large" };
 
   return { ok: true, value: { id: e.id, kind, date, category, headline: e.headline, json } };
+}
+
+// ------------------------------------------------------------------ レポート(週次ダイジェスト)
+
+const REPORT_ID_RE = /^digest:(\d{4}-\d{2}-\d{2})$/;
+
+/**
+ * 週次ダイジェスト1件の検証。本文は Markdown のテキスト(サイト側が textContent だけで描画する)。
+ * セクションのカテゴリは3つの範囲内のみ(ローカル限定の分野は受け付けない)。
+ * @returns {{ok: true, value: object} | {ok: false, error: string}}
+ */
+export function validateReport(r) {
+  if (r === null || typeof r !== "object" || Array.isArray(r)) return { ok: false, error: "not_an_object" };
+  const m = typeof r.id === "string" ? REPORT_ID_RE.exec(r.id) : null;
+  if (!m) return { ok: false, error: "bad_report_id" };
+  if (r.kind !== "digest") return { ok: false, error: "bad_report_kind" };
+  if (r.date !== m[1]) return { ok: false, error: "date_mismatch" };
+  if (!isStr(r.title, 1, 200)) return { ok: false, error: "bad_title" };
+
+  const week = r.week ?? null;
+  if (week !== null && !(isStr(week, 8, 8) && /^\d{4}-W\d{2}$/.test(week))) return { ok: false, error: "bad_week" };
+  const generatedAt = r.generated_at ?? null;
+  if (generatedAt !== null && !(isStr(generatedAt, 20, 20) && DATETIME_RE.test(generatedAt)))
+    return { ok: false, error: "bad_generated_at" };
+
+  if (!Array.isArray(r.sections) || r.sections.length === 0 || r.sections.length > CATEGORIES.length)
+    return { ok: false, error: "bad_sections" };
+  const sections = [];
+  for (const s of r.sections) {
+    if (s === null || typeof s !== "object") return { ok: false, error: "bad_section" };
+    if (!CATEGORIES.includes(s.category)) return { ok: false, error: "category_not_allowed" };
+    if (!isStr(s.heading, 1, 100)) return { ok: false, error: "bad_heading" };
+    if (!isStr(s.markdown, 1, 120_000)) return { ok: false, error: "bad_markdown" };
+    sections.push({ category: s.category, heading: s.heading, markdown: s.markdown });
+  }
+  const intro = r.intro ?? "";
+  if (typeof intro !== "string" || intro.length > 4000) return { ok: false, error: "bad_intro" };
+
+  const json = JSON.stringify({ week, generated_at: generatedAt, intro, sections });
+  if (json.length > MAX_REPORT_BYTES) return { ok: false, error: "report_too_large" };
+  return { ok: true, value: { id: r.id, kind: "digest", date: m[1], title: r.title, json } };
+}
+
+/** ウォッチ(配布サイトの新着の通知)1件。導入はしない・通知のみ。 */
+export function validateWatchItem(w) {
+  if (w === null || typeof w !== "object" || Array.isArray(w)) return { ok: false, error: "not_an_object" };
+  if (!isStr(w.watch, 1, 40)) return { ok: false, error: "bad_watch" };
+  if (!isStr(w.title, 1, 200)) return { ok: false, error: "bad_title" };
+  if (!isHttpUrl(w.url)) return { ok: false, error: "bad_url" };
+  if (!(isStr(w.detected_at, 20, 20) && DATETIME_RE.test(w.detected_at))) return { ok: false, error: "bad_detected_at" };
+  return { ok: true, value: { watch: w.watch, title: w.title, url: w.url, detected_at: w.detected_at } };
 }
 
 // ------------------------------------------------------------------ ボード

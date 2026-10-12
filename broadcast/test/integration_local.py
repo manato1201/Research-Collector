@@ -256,6 +256,63 @@ check("board 'unread' clears the row", s == 200 and not [i for i in call("GET", 
 call("PUT", f"/api/board/{HASH}", {"state": "hold"})
 check("board DELETE", call("DELETE", f"/api/board/{HASH}")[0] == 200 and not [i for i in call("GET", "/api/board")[1]["items"] if i["url_hash"] == HASH])
 
+# --- レポート(週次ダイジェスト)・ウォッチ・収集元別件数(scripts/post_report.py の実クライアントで送る)
+import tempfile
+import post_report as pr
+from nbklm import digest as digest_mod
+
+parts = {
+    "year": "2026", "week": "W41", "date": "2026-10-11",
+    "generated_label": "2026年10月11日 21:08", "generated_at": "2026-10-11T21:08:01Z",
+    "notebooks": ["Game-Dev-Tech-2026-W41", "Software-Engineering-2026-W41"],
+    "sections": [
+        {"category": "game_dev_tech", "label": digest_mod.CATEGORY_LABELS["game_dev_tech"],
+         "body": "## 要点\n- **Unity** の更新([公式](https://unity.com/))\n\n本文"},
+        {"category": "software_engineering", "label": digest_mod.CATEGORY_LABELS["software_engineering"],
+         "body": "### 論文\n- 一覧\n\n<img src=x onerror=alert(1)>\n\n[危険](javascript:alert(1)) <script>alert(2)</script>"},
+        # ローカル限定の分野に当たる、許可外のカテゴリ。クライアントが送らず、受け口も拒否する
+        {"category": "some_local_only_category", "label": "## local", "body": "ローカル限定の内容"},
+    ],
+}
+with tempfile.TemporaryDirectory() as d:
+    md_path = os.path.join(d, "weekly_digest_2026-10-11.md")
+    open(md_path, "w", encoding="utf-8").write("# Weekly Research Digest — 2026-10-11\n\n" + digest_mod.render_digest_markdown(parts))
+    json.dump(parts, open(os.path.join(d, "weekly_digest_2026-10-11.json"), "w", encoding="utf-8"), ensure_ascii=False)
+    report = pr.load_report(md_path)
+
+check("client builds the report from structured parts", report and report["id"] == "digest:2026-10-11" and len(report["sections"]) == 2, report)
+check("client drops the non-allowlisted section", "some_local_only_category" not in json.dumps(report), report)
+s, r = call("POST", "/api/ingest", {"schema": 1, "reports": [report]})
+check("report ingested", s == 200 and r["reports"] == 1, (s, r))
+s, r = call("GET", "/api/reports")
+check("report list returns the report with section count", s == 200 and r["reports"] and r["reports"][0]["id"] == "digest:2026-10-11" and r["reports"][0]["sections"] == 2, (s, r))
+s, r = call("GET", "/api/reports/digest%3A2026-10-11")
+check("report body returned (week, sections, markdown)", s == 200 and r["week"] == "2026-W41" and r["sections"][0]["category"] == "game_dev_tech" and "Unity" in r["sections"][0]["markdown"], (s, str(r)[:200]))
+check("unknown report -> 404", call("GET", "/api/reports/digest%3A1999-01-01")[0] == 404)
+check("reports require auth", call("GET", "/api/reports", token=None)[0] == 401)
+s, r = call("POST", "/api/ingest", {"schema": 1, "reports": [report, report]})
+check("re-sending the report is idempotent", s == 200 and len(call("GET", "/api/reports")[1]["reports"]) == 1)
+bad = json.loads(json.dumps(report))
+bad["sections"].append({"category": "some_local_only_category", "heading": "x", "markdown": "y"})
+s, r = call("POST", "/api/ingest", {"schema": 1, "reports": [bad]})
+check("Worker rejects a report with a non-allowlisted category (422)", s == 422 and r["errors"][0]["error"] == "category_not_allowed", (s, r))
+
+watch = [{"watch": "skills.sh", "title": "owner/repo · skill", "url": "https://skills.sh/owner/repo/skill", "detected_at": now}]
+s, r = call("POST", "/api/ingest", {"schema": 1, "watch": watch, "run": {"by_source": {"Zenn/Qiita": 48, "X posts": 0}}})
+check("watch-only ingest accepted", s == 200 and r["watch"] == 1, (s, r))
+st_watch = call("GET", "/api/status")[1]  # 後の失敗する取り込みで last_ingest が上書きされる前に読む
+s, r = call("GET", "/api/watch")
+check("watch items listed", s == 200 and r["items"] and r["items"][0]["url"] == "https://skills.sh/owner/repo/skill", (s, r))
+s, r = call("POST", "/api/ingest", {"schema": 1, "watch": [{**watch[0], "url": "javascript:alert(1)"}]})
+check("watch with a non-http url -> 422", s == 422, (s, r))
+check("status reports counts for reports and watch", st_watch["reports"]["total"] == 1 and st_watch["watch"]["total"] == 1, (st_watch["reports"], st_watch["watch"]))
+check("by_source is kept in last_run", st_watch["last_run"]["by_source"] == {"Zenn/Qiita": 48, "X posts": 0}, st_watch["last_run"])
+check("last_run survives later ingests without a run (e.g. report-only)",
+      call("GET", "/api/status")[1]["last_run"]["by_source"] == {"Zenn/Qiita": 48, "X posts": 0})
+check("articles can be filtered by until", call("GET", "/api/articles?since=2026-01-01&until=2026-01-31")[1]["total"] == 0)
+check("bad until -> 400", call("GET", "/api/articles?until=soon")[0] == 400)
+check("merged articles are listable (status=merged)", call("GET", "/api/articles?status=merged&limit=5")[0] == 200)
+
 # --- ログイン(人)・Cookie・CSRF
 if VIEW_PASSWORD:
     s, r, _ = call_raw("GET", "/api/session")

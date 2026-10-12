@@ -4,8 +4,12 @@
 //  - データは同一オリジンの /api/* から取る。HTML 文字列を組み立てない(DOM + textContent のみ)。
 //  - リンク先は http(s) だけ許可する(記事の URL は外部入力なので javascript: 等を弾く)。
 //  - 動きは「カウントアップ」と「フェードイン」の2種類だけ。prefers-reduced-motion では止める。
-//  - 読み上げはブラウザの speechSynthesis(無料。声は端末による)。
+//  - 読み上げはブラウザの speechSynthesis(無料。声は端末による)。再生バーと章の送りは player.js。
+//  - レポート(Markdown)は markdown.js で、DOM + textContent だけで描画する。
 //  - 認証: 401 が返ったらログイン画面へ。ボードの書き込みは Cookie + Origin 検査(Worker 側)。
+
+import { markdownToSpeech, renderMarkdown } from "./markdown.js";
+import * as player from "./player.js";
 
 const CATEGORIES = ["game_dev_tech", "graphics_research", "software_engineering"];
 const LABELS = {
@@ -198,10 +202,16 @@ function renderItem(a, { showCategoryBadge = true } = {}) {
   const meta = h("div", { class: "item-meta" });
   if (a.platform) meta.append(h("span", { class: "badge" }, a.platform));
   if (showCategoryBadge && others.length) {
-    meta.append(h("span", { class: "badge" }, `ほかのカテゴリにも: ${others.map(catLabel).join(" / ")}`));
+    meta.append(
+      h(
+        "span",
+        { class: "badge", title: "この記事は、ほかのカテゴリのレーンにも出ています(件数は重複して数えません)" },
+        `ほかのカテゴリにも: ${others.map(catLabel).join(" / ")}`,
+      ),
+    );
   }
-  if (a.review) meta.append(h("span", { class: "badge warn" }, "要確認"));
-  if (board) meta.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state] ?? board.state));
+  if (a.review) meta.append(h("span", { class: "badge warn", title: "分類に自信がありません。人の確認が必要です" }, "要確認"));
+  if (board) meta.append(h("span", { class: "badge state", title: "ボードに入れた状態" }, BOARD_LABELS[board.state] ?? board.state));
 
   const li = h(
     "li",
@@ -326,7 +336,8 @@ function buildDrawerBody(a) {
 
   wrap.append(dl);
   if (sum) wrap.append(sum);
-  wrap.append(h("div", { class: "drawer-actions" }, open), stateBox, noteInput);
+  const readOne = readButton("この記事を読み上げ", a.title, () => [{ label: "記事", text: `${a.title}。${a.summary ?? ""}` }]);
+  wrap.append(h("div", { class: "drawer-actions" }, open, readOne), stateBox, noteInput);
   return wrap;
 }
 
@@ -382,15 +393,140 @@ async function renderStatusBar() {
   }
 }
 
+/** パンくず。最後の1つは現在のページ(リンクにしない)。区切りは読み上げに含めない。 */
+function crumbs(...parts) {
+  const nav = h("nav", { class: "crumbs", "aria-label": "パンくず" });
+  parts.forEach((part, i) => {
+    if (i > 0) nav.append(h("span", { "aria-hidden": "true" }, "›"));
+    const last = i === parts.length - 1;
+    nav.append(typeof part === "string" ? h("span", { "aria-current": last ? "page" : null }, part) : part);
+  });
+  return nav;
+}
+
+// ------------------------------------------------------------------ 読み上げ(ブラウザの音声。再生バーは player.js)
+
+const itemText = (a) => `${a.title}。${a.summary ?? ""}`.trim();
+const chapterLabel = (a, i) => `${i + 1}. ${String(a.title).slice(0, 36)}`;
+const itemsToChapters = (items, n = 10) =>
+  items.slice(0, n).map((a, i) => ({ label: chapterLabel(a, i), text: itemText(a) }));
+
+/**
+ * 読み上げのボタン。押すと再生バーが出て、章ごとにスキップできる。
+ * build は押したときに呼ぶ(読み上げる内容を、その時点の表示から作る)。
+ * 読み上げに対応していないブラウザでは、無効にして理由を出す。
+ */
+function readButton(label, title, build) {
+  if (!player.supported) {
+    return h(
+      "button",
+      { class: "btn read-btn", type: "button", disabled: true, title: "このブラウザは読み上げに対応していません" },
+      label,
+    );
+  }
+  const btn = h(
+    "button",
+    {
+      class: "btn read-btn",
+      type: "button",
+      "aria-pressed": "false",
+      dataset: { readTitle: title, readLabel: label },
+      onclick: () => {
+        const s = player.snapshot();
+        if (s.status !== "idle" && s.title === title) {
+          player.stop();
+          return;
+        }
+        const payload = build();
+        if (!player.read({ title, chapters: payload })) toast("読み上げる内容がありません", true);
+      },
+    },
+    label,
+  );
+  return btn;
+}
+
+// 再生状態に合わせて、ボタンの「停止 / 読み上げ」を切り替える
+player.onChange((s) => {
+  document.querySelectorAll("[data-read-title]").forEach((b) => {
+    const on = s.status !== "idle" && s.title === b.dataset.readTitle;
+    b.setAttribute("aria-pressed", String(on));
+    b.textContent = on ? "停止" : b.dataset.readLabel;
+  });
+});
+
+// ------------------------------------------------------------------ 共通: 目次の現在位置・速報
+
+function attachScrollSpy(toc, ids) {
+  const links = new Map([...toc.querySelectorAll("a")].map((a) => [a.dataset.anchor, a]));
+  const obs = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        links.forEach((a) => a.removeAttribute("aria-current"));
+        links.get(e.target.id)?.setAttribute("aria-current", "true");
+      }
+    },
+    { rootMargin: "-20% 0px -70% 0px" },
+  );
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) obs.observe(el);
+  });
+  cleanup.push(() => obs.disconnect());
+}
+
+/** 速報ティッカー。ゆっくり流れる。停止ボタンがあり、ホバー・フォーカス中も止まる。reduced-motion では流れない。 */
+function buildTicker(items) {
+  if (!items.length) return null;
+  const mkSet = (dup) =>
+    h(
+      "div",
+      { class: `ticker-set${dup ? " ticker-dup" : ""}`, "aria-hidden": dup ? "true" : null },
+      ...items.map((a) =>
+        h("a", { href: a.url, target: "_blank", rel: "noopener noreferrer", tabindex: dup ? "-1" : null }, a.title),
+      ),
+    );
+  const track = h("div", { class: "ticker-track" }, mkSet(false), mkSet(true));
+  const chars = items.reduce((n, a) => n + String(a.title).length, 0);
+  track.style.animationDuration = `${Math.max(40, Math.round(chars * 0.45))}s`;
+
+  const toggle = h(
+    "button",
+    {
+      class: "icon-btn ticker-toggle",
+      type: "button",
+      "aria-pressed": "false",
+      onclick: (ev) => {
+        const paused = ticker.dataset.paused !== "true";
+        ticker.dataset.paused = String(paused);
+        ev.currentTarget.setAttribute("aria-pressed", String(paused));
+        ev.currentTarget.textContent = paused ? "再生" : "停止";
+      },
+    },
+    "停止",
+  );
+  const ticker = h(
+    "div",
+    { class: "ticker", role: "region", "aria-label": "速報", dataset: { paused: "false" } },
+    h("span", { class: "ticker-label" }, "速報"),
+    h("div", { class: "ticker-view" }, track),
+    toggle,
+  );
+  return ticker;
+}
+
 // ------------------------------------------------------------------ ページ: 今日の放送
 
 async function pageHome(view, params) {
   view.replaceChildren(renderSkeleton());
   const wanted = params.get("d");
   const dateQuery = wanted && /^\d{4}-\d{2}-\d{2}$/.test(wanted) ? wanted : "latest";
-  const [{ date, episodes }, datesRes] = await Promise.all([
+  const [{ date, episodes }, datesRes, watch, status] = await Promise.all([
     api(`/api/episodes?kind=daily&date=${dateQuery}`),
     api("/api/episodes/dates?kind=daily"),
+    api("/api/watch").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { items: [] })),
+    loadStatus().catch(() => null),
     loadBoard(),
   ]);
 
@@ -416,17 +552,18 @@ async function pageHome(view, params) {
 
   const dateSelect = h(
     "select",
-    {
-      class: "btn",
-      "aria-label": "日付を選ぶ",
-      onchange: (ev) => navigate(`/?d=${ev.target.value}`),
-    },
+    { class: "btn", "aria-label": "日付を選ぶ", onchange: (ev) => navigate(`/?d=${ev.target.value}`) },
     ...datesRes.dates.map((d) => h("option", { value: d, selected: d === date }, d)),
   );
 
-  const speakBtn = "speechSynthesis" in window
-    ? h("button", { class: "btn", type: "button", "aria-pressed": "false", onclick: (ev) => toggleSpeech(ev.currentTarget, all, lanes) }, "読み上げ")
-    : null;
+  // 全体の読み上げ: 見出し → カテゴリごとの章(件数と上位の記事)
+  const readAll = readButton("全体を読み上げ", `${date} の放送`, () => [
+    { label: "見出し", text: all.headline },
+    ...CATEGORIES.filter((c) => lanes[c]).map((c) => ({
+      label: catLabel(c),
+      text: `${catLabel(c)}、${lanes[c].data.count}件。` + lanes[c].data.items.slice(0, 5).map(itemText).join(" "),
+    })),
+  ]);
 
   const picker = h("div", { class: "lane-picker", role: "group", "aria-label": "カテゴリを選ぶ" });
   let mobileCat = CATEGORIES.find((c) => lanes[c]) ?? CATEGORIES[0];
@@ -446,13 +583,13 @@ async function pageHome(view, params) {
     );
     if (ep) {
       lane.append(h("p", { class: "lane-headline" }, ep.headline.replace(/^[^:]+: /, "")));
-      const list = h("ul", { class: "list" }, ...items.slice(0, HOME_LANE_ITEMS).map((a) => renderItem(a)));
-      lane.append(list);
+      lane.append(h("ul", { class: "list" }, ...items.slice(0, HOME_LANE_ITEMS).map((a) => renderItem(a))));
       lane.append(
         h(
           "div",
           { class: "lane-foot" },
-          h("a", { class: "btn", href: `/c/${c}`, "data-link": "" }, `${catLabel(c)} をすべて見る(${ep.data.count}件)`),
+          readButton("このカテゴリを読み上げ", `${catLabel(c)} の新着(${date})`, () => itemsToChapters(items)),
+          h("a", { class: "btn", href: `/c/${c}`, "data-link": "" }, `すべて見る(${ep.data.count}件)`),
         ),
       );
     } else {
@@ -474,81 +611,100 @@ async function pageHome(view, params) {
       )
     : null;
 
+  // 速報: 注目 + 各カテゴリの先頭(重複は除く)
+  const tickerItems = [];
+  const seen = new Set();
+  for (const a of [...highlights, ...CATEGORIES.flatMap((c) => (lanes[c]?.data.items ?? []).slice(0, 3))]) {
+    if (!seen.has(a.url_hash)) {
+      seen.add(a.url_hash);
+      tickerItems.push(a);
+    }
+  }
+
+  const latestReport = status?.reports?.latest;
+  const reportLink = latestReport
+    ? h("a", { class: "btn", href: `/reports/${encodeURIComponent(`digest:${latestReport}`)}`, "data-link": "" }, `最新のレポート(${latestReport})`)
+    : null;
+
+  const watchItems = watch.items ?? [];
+  const watchBox = watchItems.length
+    ? h(
+        "details",
+        { class: "acc watch-list" },
+        h("summary", null, `配布サイトの新着(通知のみ) ${watchItems.length}件`),
+        h("p", { class: "tool-note", style: null }, "導入はしません。中身を確認してから判断してください。"),
+        h(
+          "ul",
+          null,
+          ...watchItems.map((w) =>
+            h(
+              "li",
+              null,
+              h("time", { class: "mono" }, shortDate(w.detected_at)),
+              h("a", { href: w.url, target: "_blank", rel: "noopener noreferrer" }, w.title),
+              h("span", { class: "badge" }, w.watch),
+            ),
+          ),
+        ),
+      )
+    : null;
+
   view.replaceChildren(
     h(
       "div",
       { class: "hero" },
       h("div", null, h("h1", null, "今日の", h("em", null, "放送")), h("p", { class: "sub" }, h("time", { class: "mono" }, date), " ・ ", all.headline)),
-      h(
-        "div",
-        { class: "stats" },
-        stat(counts.total, "新着(URL単位)", "new"),
-        stat(counts.review, "要確認"),
-      ),
+      h("div", { class: "stats" }, stat(counts.total, "新着(URL単位)", "new"), stat(counts.review, "要確認")),
     ),
-    h("div", { class: "row-controls" }, dateSelect, speakBtn),
+    buildTicker(tickerItems),
+    h("div", { class: "row-controls" }, dateSelect, readAll, reportLink),
     hl,
     picker,
     h("div", { class: "lanes" }, ...CATEGORIES.map((c) => laneEls[c])),
+    watchBox,
   );
   applyMobile();
-  countUp(view);
-  fadeIn([...view.querySelectorAll(".lane")]);
-}
-
-// ------------------------------------------------------------------ 読み上げ(ブラウザの音声)
-
-function stopSpeech() {
-  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
-  document.querySelectorAll('[aria-pressed="true"][data-speaking]').forEach((b) => {
-    b.setAttribute("aria-pressed", "false");
-    b.textContent = "読み上げ";
-  });
-}
-
-function toggleSpeech(btn, all, lanes) {
-  if (btn.getAttribute("aria-pressed") === "true") {
-    stopSpeech();
-    return;
-  }
-  const lines = [all.headline];
-  for (const c of CATEGORIES) {
-    const ep = lanes[c];
-    if (!ep) continue;
-    lines.push(`${catLabel(c)}、${ep.data.count}件。`);
-    for (const a of ep.data.items.slice(0, 3)) lines.push(a.title);
-  }
-  const synth = window.speechSynthesis;
-  synth.cancel();
-  btn.dataset.speaking = "1";
-  btn.setAttribute("aria-pressed", "true");
-  btn.textContent = "停止";
-  lines.forEach((text, i) => {
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = "ja-JP";
-    if (i === lines.length - 1) u.onend = () => stopSpeech();
-    u.onerror = () => stopSpeech();
-    synth.speak(u);
-  });
-  cleanup.push(stopSpeech);
+  countUp(view); // トップの動きは「カウントアップ」と「速報の流れ」の2種類(フェードインは使わない)
 }
 
 // ------------------------------------------------------------------ ページ: カテゴリ
 
+function previousMonthRange(today) {
+  const [y, m] = today.split("-").map(Number);
+  const first = new Date(Date.UTC(y, m - 2, 1));
+  const last = new Date(Date.UTC(y, m - 1, 0));
+  return { since: ymd(first), until: ymd(last) };
+}
+
+const PERIODS = [
+  ["today", "今日"],
+  ["week", "今週"],
+  ["30d", "30日"],
+  ["month", "先月"],
+];
+
 async function pageCategory(view, cat, params) {
   if (!CATEGORIES.includes(cat)) return pageNotFound(view);
-  const period = ["today", "week", "30d"].includes(params.get("p")) ? params.get("p") : "week";
+  const period = PERIODS.some(([k]) => k === params.get("p")) ? params.get("p") : "week";
   const source = params.get("s");
   const onlyReview = params.get("r") === "1";
 
   const today = jstToday();
-  const since = period === "today" ? today : period === "week" ? weekStart(today) : addDays(today, -29);
+  let since;
+  let until = null;
+  if (period === "today") since = today;
+  else if (period === "week") since = weekStart(today);
+  else if (period === "30d") since = addDays(today, -29);
+  else ({ since, until } = previousMonthRange(today));
 
   view.replaceChildren(renderSkeleton());
-  const [res] = await Promise.all([
-    api(`/api/articles?category=${cat}&status=added&since=${since}&limit=200`),
+  const q = `category=${cat}&status=added&since=${since}${until ? `&until=${until}` : ""}&limit=200`;
+  const [res, headlineRes] = await Promise.all([
+    api(`/api/articles?${q}`),
+    api(`/api/episodes?kind=daily&date=latest&category=${cat}`).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),
     loadBoard(),
   ]);
+  const headline = headlineRes?.episodes?.[0]?.headline ?? null;
 
   const articles = res.articles.map((a) => ({ ...a, other_categories: a.categories.filter((c) => c !== cat) }));
   const sourceCount = new Map();
@@ -556,16 +712,16 @@ async function pageCategory(view, cat, params) {
   const sources = [...sourceCount].map(([platform, count]) => ({ platform, count })).sort((a, b) => b.count - a.count);
 
   const go = (patch) => {
-    const q = new URLSearchParams({ p: period, ...(source ? { s: source } : {}), ...(onlyReview ? { r: "1" } : {}) });
-    for (const [k, v] of Object.entries(patch)) (v === null ? q.delete(k) : q.set(k, v));
-    navigate(`/c/${cat}?${q}`);
+    const qs = new URLSearchParams({ p: period, ...(source ? { s: source } : {}), ...(onlyReview ? { r: "1" } : {}) });
+    for (const [k, v] of Object.entries(patch)) (v === null ? qs.delete(k) : qs.set(k, v));
+    navigate(`/c/${cat}?${qs}`);
   };
 
   const shown = articles.filter((a) => (!source || a.platform === source) && (!onlyReview || a.review));
   const seg = h(
     "div",
     { class: "seg", role: "group", "aria-label": "期間" },
-    ...[["today", "今日"], ["week", "今週"], ["30d", "30日"]].map(([k, label]) =>
+    ...PERIODS.map(([k, label]) =>
       h("button", { type: "button", "aria-pressed": String(period === k), onclick: () => go({ p: k }) }, label),
     ),
   );
@@ -574,17 +730,25 @@ async function pageCategory(view, cat, params) {
     { class: "chip", type: "button", "aria-pressed": String(onlyReview), onclick: () => go({ r: onlyReview ? null : "1" }) },
     "要確認のみ",
   );
+  const periodLabel = PERIODS.find(([k]) => k === period)[1];
+  const readThis = readButton("このページを読み上げ", `${catLabel(cat)}(${periodLabel})`, () => itemsToChapters(shown, 20));
 
   const list = shown.length
     ? h("ul", { class: "list" }, ...shown.map((a) => renderItem(a)))
     : renderEmpty("該当する記事がありません", "期間や絞り込みを変えてみてください。");
 
   view.replaceChildren(
-    h("nav", { class: "crumbs", "aria-label": "パンくず" }, h("a", { href: "/", "data-link": "" }, "放送"), "›", catLabel(cat)),
+    crumbs(h("a", { href: "/", "data-link": "" }, "放送"), catLabel(cat)),
     h("h1", null, dot(cat), " ", catLabel(cat)),
-    h("p", { class: "sub" }, `${since} 〜 ・ `, h("span", { class: "num" }, String(shown.length)), "件を表示"),
-    h("div", { class: "row-controls" }, seg, reviewChip),
-    sourceChips(sources, source, (key) => go({ s: key })),
+    headline ? h("p", { class: "sub" }, "今日のヘッドライン: ", headline.replace(/^[^:]+: /, "")) : null,
+    h("p", { class: "sub" }, `${since}${until ? ` 〜 ${until}` : " 〜"} ・ `, h("span", { class: "num" }, String(shown.length)), "件を表示"),
+    // カテゴリの切り替え・絞り込みは、スクロールしても上に固定する(スティッキー)
+    h(
+      "div",
+      { class: "sticky-controls" },
+      h("div", { class: "row-controls" }, seg, reviewChip, readThis),
+      sourceChips(sources, source, (key) => go({ s: key })),
+    ),
     list,
     res.total > res.articles.length
       ? h("p", { class: "fig-note" }, `ほか ${res.total - res.articles.length} 件あります(新しい順に最大200件まで表示)`)
@@ -595,14 +759,17 @@ async function pageCategory(view, cat, params) {
 
 // ------------------------------------------------------------------ ページ: ボード
 
-async function pageBoard(view) {
+async function pageBoard(view, params) {
   view.replaceChildren(renderSkeleton());
   const data = await api("/api/board");
   state.board = new Map(data.items.map((i) => [i.url_hash, { state: i.state, note: i.note }]));
   state.boardLoaded = true;
 
+  const catFilter = CATEGORIES.includes(params.get("c")) ? params.get("c") : null;
+  const visible = data.items.filter((it) => !catFilter || (it.article?.categories ?? []).includes(catFilter));
+
   const by = { reading: [], try: [], hold: [] };
-  for (const it of data.items) (by[it.state] ?? []).push(it);
+  for (const it of visible) (by[it.state] ?? []).push(it);
 
   const lane = (s) => {
     const items = by[s];
@@ -629,9 +796,27 @@ async function pageBoard(view) {
     return box;
   };
 
+  const chip = (label, key) =>
+    h(
+      "button",
+      {
+        class: "chip",
+        type: "button",
+        "aria-pressed": String(catFilter === key),
+        onclick: () => navigate(key ? `/board?c=${key}` : "/board"),
+      },
+      label,
+    );
+
   view.replaceChildren(
     h("h1", null, "ボード"),
     h("p", { class: "sub" }, "記事の詳細で「読む」「試す」「保留」に入れた記事です。保持期間(90日)を過ぎた記事は本文が消えます。"),
+    h(
+      "div",
+      { class: "row-controls", role: "group", "aria-label": "カテゴリで絞り込む" },
+      chip("すべて", null),
+      ...CATEGORIES.map((c) => chip(catLabel(c), c)),
+    ),
     h("div", { class: "lanes" }, ...BOARD_ORDER.map(lane)),
   );
   fadeIn([...view.querySelectorAll(".lane")]);
@@ -639,41 +824,69 @@ async function pageBoard(view) {
 
 // ------------------------------------------------------------------ ページ: 週次特集(図は SVG)
 
-function barChart({ title, rows, note, vertical }) {
+function barChart({ title, rows, note }) {
   const max = Math.max(1, ...rows.map((r) => r.value));
   const fig = h("figure", { class: "fig" }, h("h3", null, title));
-  let chart;
+  const W = 560, rowH = 30, left = 150, right = 44;
+  const H = rows.length * rowH + 6;
+  const chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${title}: ${rows.map((r) => `${r.label} ${r.value}件`).join("、")}` });
+  rows.forEach((r, i) => {
+    const w = ((W - left - right) * r.value) / max;
+    const y = i * rowH + 4;
+    chart.append(
+      svg("text", { x: 0, y: y + 15 }, r.label),
+      svg("rect", { class: `bar ${r.cls ?? "total"}`, x: left, y, width: Math.max(w, r.value ? 1 : 0), height: 20, rx: 3 }),
+      svg("text", { class: "val", x: left + w + 6, y: y + 15 }, String(r.value)),
+    );
+  });
+  fig.append(chart);
+  if (note) fig.append(h("p", { class: "fig-note" }, note));
+  return fig;
+}
 
-  if (vertical) {
-    const W = 560, H = 190, left = 8, top = 22, bottom = 26;
-    const bw = (W - left * 2) / rows.length;
-    chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${title}: ${rows.map((r) => `${r.label} ${r.value}件`).join("、")}` });
-    chart.append(svg("line", { class: "axis", x1: left, x2: W - left, y1: H - bottom, y2: H - bottom }));
-    rows.forEach((r, i) => {
-      const bh = ((H - top - bottom) * r.value) / max;
-      const x = left + i * bw + bw * 0.18;
-      chart.append(
-        svg("rect", { class: `bar ${r.cls ?? "total"}`, x, y: H - bottom - bh, width: bw * 0.64, height: Math.max(bh, r.value ? 1 : 0), rx: 3 }),
-        svg("text", { class: "val", x: x + (bw * 0.64) / 2, y: H - bottom - bh - 5, "text-anchor": "middle" }, String(r.value)),
-        svg("text", { x: x + (bw * 0.64) / 2, y: H - 8, "text-anchor": "middle" }, r.label),
-      );
-    });
-  } else {
-    const W = 560, rowH = 30, left = 150, right = 44;
-    const H = rows.length * rowH + 6;
-    chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${title}: ${rows.map((r) => `${r.label} ${r.value}件`).join("、")}` });
-    rows.forEach((r, i) => {
-      const w = ((W - left - right) * r.value) / max;
-      const y = i * rowH + 4;
-      chart.append(
-        svg("text", { x: 0, y: y + 15 }, r.label),
-        svg("rect", { class: `bar ${r.cls ?? "total"}`, x: left, y, width: Math.max(w, r.value ? 1 : 0), height: 20, rx: 3 }),
-        svg("text", { class: "val", x: left + w + 6, y: y + 15 }, String(r.value)),
-      );
-    });
+/** 日別の推移の折れ線。見えたときに、線が引かれる(1回。reduced-motion では最初から全部)。 */
+function lineChart({ title, rows, note }) {
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  const fig = h("figure", { class: "fig" }, h("h3", null, title));
+  const W = 560, H = 190, left = 24, right = 24, top = 24, bottom = 28;
+  const step = rows.length > 1 ? (W - left - right) / (rows.length - 1) : 0;
+  const pts = rows.map((r, i) => ({
+    x: left + i * step,
+    y: top + (H - top - bottom) * (1 - r.value / max),
+    ...r,
+  }));
+  const chart = svg("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": `${title}: ${rows.map((r) => `${r.label} ${r.value}件`).join("、")}` });
+  chart.append(svg("line", { class: "axis", x1: left, x2: W - right, y1: H - bottom, y2: H - bottom }));
+
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
+  const path = svg("path", {
+    class: "line",
+    d: pts.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(" "),
+    "stroke-dasharray": String(Math.ceil(len) + 2),
+  });
+  path.style.setProperty("--len", String(Math.ceil(len) + 2));
+  chart.append(path);
+  for (const p of pts) {
+    chart.append(
+      svg("circle", { class: "pt", cx: p.x.toFixed(1), cy: p.y.toFixed(1), r: 3.5 }),
+      svg("text", { class: "val", x: p.x.toFixed(1), y: (p.y - 9).toFixed(1), "text-anchor": "middle" }, String(p.value)),
+      svg("text", { x: p.x.toFixed(1), y: H - 8, "text-anchor": "middle" }, p.label),
+    );
   }
   fig.append(chart);
   if (note) fig.append(h("p", { class: "fig-note" }, note));
+
+  if (!reduceMotion && "IntersectionObserver" in window) {
+    const obs = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) {
+        path.classList.add("draw");
+        obs.disconnect();
+      }
+    });
+    obs.observe(fig);
+    cleanup.push(() => obs.disconnect());
+  }
   return fig;
 }
 
@@ -710,10 +923,9 @@ async function pageWeekly(view, label) {
   );
 
   const dayLabel = (day) => `${day.slice(5, 7)}/${day.slice(8, 10)}`;
-  const dailyFig = barChart({
+  const dailyFig = lineChart({
     title: "日別の新着(URL単位)",
-    vertical: true,
-    rows: d.daily.map((r) => ({ label: dayLabel(r.date), value: r.total, cls: "total" })),
+    rows: d.daily.map((r) => ({ label: dayLabel(r.date), value: r.total })),
     note: "カテゴリ別の件数の合計は、複数カテゴリの記事を重ねて数えるため、この合計を超えることがあります。",
   });
   const catFig = barChart({
@@ -751,38 +963,156 @@ async function pageWeekly(view, label) {
     ...chapters,
   );
 
+  const readWeek = readButton("特集を読み上げ", `週次特集 ${res.date}`, () => [
+    { label: "概要", text: [ep.headline, ...(d.highlights ?? []).map(itemText)].join(" ") },
+    ...d.chapters.map((ch) => ({
+      label: catLabel(ch.category),
+      text: `${catLabel(ch.category)}、${ch.count}件。` + ch.items.map(itemText).join(" "),
+    })),
+  ]);
+
   view.replaceChildren(
+    crumbs(h("a", { href: "/", "data-link": "" }, "放送"), h("a", { href: "/weekly", "data-link": "" }, "特集"), res.date),
     h("h1", null, "週次", h("em", null, "特集")),
-    h("p", { class: "sub" }, h("time", { class: "mono" }, `${res.date}`), " ・ 新着 ", h("span", { class: "num", "data-count": String(d.counts.total) }, "0"), "件"),
-    h("div", { class: "row-controls" }, weekSelect),
+    h("p", { class: "sub" }, h("time", { class: "mono" }, `${res.date}`), ` ・ 新着 ${d.counts.total}件`),
+    h("div", { class: "row-controls" }, weekSelect, readWeek),
     h("div", { class: "weekly" }, toc, content),
   );
-  countUp(view);
+  // 週次の動きは「線が引かれる」と「目次の現在位置」の2種類
+  attachScrollSpy(toc, sections.map((s) => s.id));
+}
 
-  // 目次の現在位置(IntersectionObserver)
-  const links = new Map([...toc.querySelectorAll("a")].map((a) => [a.dataset.anchor, a]));
-  const obs = new IntersectionObserver(
-    (entries) => {
-      for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        links.forEach((a) => a.removeAttribute("aria-current"));
-        links.get(e.target.id)?.setAttribute("aria-current", "true");
-      }
-    },
-    { rootMargin: "-20% 0px -70% 0px" },
+// ------------------------------------------------------------------ ページ: レポート(週次ダイジェスト)
+
+async function pageReports(view) {
+  view.replaceChildren(renderSkeleton());
+  const res = await api("/api/reports");
+  const reports = res.reports ?? [];
+
+  if (!reports.length) {
+    view.replaceChildren(
+      h("h1", null, "週次", h("em", null, "レポート")),
+      renderEmpty(
+        "まだレポートがありません",
+        "週次ダイジェスト(水曜・日曜の朝に生成)が取り込まれると、ここに並びます。",
+      ),
+    );
+    return;
+  }
+
+  const cards = reports.map((r, i) =>
+    h(
+      "li",
+      null,
+      h(
+        "a",
+        { class: "report-card", href: `/reports/${encodeURIComponent(r.id)}`, "data-link": "" },
+        h("b", null, r.title),
+        h(
+          "span",
+          { class: "meta" },
+          h("time", { class: "mono" }, r.date),
+          r.week ? h("span", { class: "badge" }, r.week) : null,
+          h("span", null, `${r.sections}章`),
+          i === 0 ? h("span", { class: "badge state" }, "最新") : null,
+        ),
+      ),
+    ),
   );
-  sections.forEach((s) => {
-    const el = document.getElementById(s.id);
-    if (el) obs.observe(el);
+
+  view.replaceChildren(
+    h("h1", null, "週次", h("em", null, "レポート")),
+    h("p", { class: "sub" }, "NotebookLM が、その週に集めた記事をカテゴリごとにまとめた週次ダイジェストです。"),
+    h("ul", { class: "report-list" }, ...cards),
+  );
+  fadeIn([...view.querySelectorAll(".report-card")]);
+}
+
+async function pageReport(view, id) {
+  view.replaceChildren(renderSkeleton());
+  let r;
+  try {
+    r = await api(`/api/reports/${encodeURIComponent(id)}`);
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
+    view.replaceChildren(
+      h("h1", null, "レポートが見つかりません"),
+      renderEmpty("見つかりません", "一覧から選び直してください。"),
+      h("p", { class: "lane-foot" }, h("a", { class: "btn", href: "/reports", "data-link": "" }, "レポートの一覧へ")),
+    );
+    return;
+  }
+
+  const sections = r.sections ?? [];
+  const ids = sections.map((s, i) => ({ id: `sec-r${i}`, label: s.heading, category: s.category }));
+  const toc = h(
+    "nav",
+    { class: "toc", "aria-label": "目次" },
+    ...ids.map((s) => h("a", { href: `#${s.id}`, "data-anchor": s.id }, s.label)),
+  );
+
+  const body = h(
+    "div",
+    null,
+    ...sections.map((s, i) =>
+      h(
+        "section",
+        { class: "chapter", id: ids[i].id },
+        h("h2", null, dot(s.category), s.heading),
+        h("div", { class: "md" }, renderMarkdown(s.markdown, { baseLevel: 3 })),
+        h(
+          "p",
+          { class: "lane-foot" },
+          h("a", { class: "btn", href: `/c/${s.category}`, "data-link": "" }, `${catLabel(s.category)} の記事を見る`),
+        ),
+      ),
+    ),
+  );
+
+  const readReport = readButton("レポートを読み上げ", r.title, () =>
+    sections.map((s) => ({ label: s.heading, text: `${s.heading}。` + markdownToSpeech(s.markdown) })),
+  );
+
+  view.replaceChildren(
+    crumbs(h("a", { href: "/", "data-link": "" }, "放送"), h("a", { href: "/reports", "data-link": "" }, "レポート"), r.date),
+    h("h1", null, r.title),
+    h(
+      "div",
+      { class: "report-meta" },
+      h("span", null, "日付: ", h("time", { class: "mono" }, r.date), r.week ? ` ・ ${r.week}` : ""),
+      r.generated_at ? h("span", null, "生成: ", h("time", { class: "mono" }, formatDateTime(r.generated_at))) : null,
+      r.intro ? h("span", null, r.intro) : null,
+    ),
+    h("div", { class: "row-controls" }, readReport, h("a", { class: "btn", href: "/reports", "data-link": "" }, "一覧へ")),
+    h("div", { class: "weekly" }, toc, body),
+  );
+
+  // レポートの動きは「読み進めの進捗バー」と「目次の現在位置」の2種類
+  attachScrollSpy(toc, ids.map((s) => s.id));
+  const bar = document.getElementById("progress-bar");
+  bar.hidden = false;
+  const update = () => {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    bar.style.width = `${max > 0 ? Math.min(100, (window.scrollY / max) * 100) : 0}%`;
+  };
+  update();
+  window.addEventListener("scroll", update, { passive: true });
+  cleanup.push(() => {
+    window.removeEventListener("scroll", update);
+    bar.hidden = true;
+    bar.style.width = "0";
   });
-  cleanup.push(() => obs.disconnect());
 }
 
 // ------------------------------------------------------------------ ページ: 状態
 
 async function pageStatus(view) {
   view.replaceChildren(renderSkeleton());
-  const s = await loadStatus(true);
+  const [s, merged, failed] = await Promise.all([
+    loadStatus(true),
+    api("/api/articles?status=merged&limit=30").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { articles: [], total: 0 })),
+    api("/api/articles?status=failed&limit=30").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { articles: [], total: 0 })),
+  ]);
   const stale = s.last_success_at ? Date.now() - Date.parse(s.last_success_at) > STALE_HOURS * 3600_000 : true;
   const li = s.last_ingest;
 
@@ -803,9 +1133,34 @@ async function pageStatus(view) {
           ? [h("time", { class: "mono" }, formatDateTime(s.last_success_at)), " ", `(${relativeTime(s.last_success_at)})`, stale ? h("span", { class: "badge warn" }, "止まっている可能性") : null]
           : "まだありません",
       ],
-      ["直近の取り込み", li ? `記事 ${li.accepted}件 / 拒否 ${li.rejected}件 / episode ${li.episodes}件 / 削除 ${li.purged}件` : "まだありません"],
+      [
+        "直近の取り込み",
+        li
+          ? `記事 ${li.accepted}件 / 拒否 ${li.rejected}件 / episode ${li.episodes}件 / レポート ${li.reports ?? 0}件 / ウォッチ ${li.watch ?? 0}件 / 削除 ${li.purged}件`
+          : "まだありません",
+      ],
     ]),
   );
+
+  // 収集元ごとの取得件数(health.json の by_source。直近の日次の実行)
+  const run = s.last_run;
+  const bySource = Object.entries(run?.by_source ?? {});
+  const sourcePanel = bySource.length
+    ? h(
+        "section",
+        { class: "panel" },
+        h("h2", null, "収集元ごとの取得件数(直近の実行)"),
+        h(
+          "table",
+          { class: "plain" },
+          h("thead", null, h("tr", null, h("th", null, "収集元"), h("th", { class: "num" }, "取得"))),
+          h("tbody", null, ...bySource.map(([name, n]) => h("tr", null, h("td", null, name), h("td", { class: "num" }, String(n))))),
+        ),
+        run.collected != null || run.new != null
+          ? h("p", { class: "fig-note" }, `合計 ${run.collected ?? "—"}件 ・ 新規 ${run.new ?? "—"}件(${formatDateTime(run.received_at)} に受信)`)
+          : null,
+      )
+    : null;
 
   const byCat = h(
     "section",
@@ -821,10 +1176,12 @@ async function pageStatus(view) {
   const eps = h(
     "section",
     { class: "panel" },
-    h("h2", null, "放送"),
+    h("h2", null, "放送・レポート・ウォッチ"),
     kv([
       ["最新の日次", s.episodes.latest_daily ?? "なし"],
       ["最新の週次", s.episodes.latest_weekly ?? "なし"],
+      ["レポート", s.reports ? `${s.reports.total}件(最新 ${s.reports.latest ?? "なし"})` : "なし"],
+      ["ウォッチ", s.watch ? `${s.watch.total}件` : "なし"],
     ]),
   );
 
@@ -837,7 +1194,38 @@ async function pageStatus(view) {
       )
     : h("section", { class: "panel" }, h("h2", null, "取得に失敗した収集元"), h("p", { class: "sub" }, "ありません"));
 
-  view.replaceChildren(h("h1", null, "状態"), ingest, byCat, eps, failures);
+  const articleAcc = (title, res, note) =>
+    res.articles.length
+      ? h(
+          "details",
+          { class: "acc" },
+          h("summary", null, `${title}(${res.total}件)`),
+          h("p", { class: "tool-note" }, note),
+          h(
+            "ul",
+            null,
+            ...res.articles.map((a) =>
+              h(
+                "li",
+                null,
+                h("a", { href: a.url, target: "_blank", rel: "noopener noreferrer" }, a.title),
+                a.merged_into ? h("div", { class: "err" }, `→ ${a.merged_into}`) : null,
+              ),
+            ),
+          ),
+        )
+      : null;
+
+  view.replaceChildren(
+    h("h1", null, "状態"),
+    ingest,
+    sourcePanel,
+    byCat,
+    eps,
+    failures,
+    articleAcc("統合された記事", merged, "似た記事を1本にまとめたものです。矢印の先が代表の記事です。"),
+    articleAcc("NotebookLM への追加に失敗した記事", failed, "次回の実行で再試行されます。"),
+  );
   fadeIn([...view.querySelectorAll(".panel, details")]);
 }
 
@@ -887,8 +1275,10 @@ function pageNotFound(view) {
 const ROUTES = [
   { re: /^\/$/, nav: "home", title: "今日の放送", run: (v, _m, q) => pageHome(v, q) },
   { re: /^\/c\/([a-z_]+)$/, nav: "home", title: "カテゴリ", run: (v, m, q) => pageCategory(v, m[1], q) },
-  { re: /^\/board$/, nav: "board", title: "ボード", run: (v) => pageBoard(v) },
+  { re: /^\/board$/, nav: "board", title: "ボード", run: (v, _m, q) => pageBoard(v, q) },
   { re: /^\/weekly(?:\/(\d{4}-W\d{2}))?$/, nav: "weekly", title: "週次特集", run: (v, m) => pageWeekly(v, m[1] ?? null) },
+  { re: /^\/reports$/, nav: "reports", title: "レポート", run: (v) => pageReports(v) },
+  { re: /^\/reports\/(digest:\d{4}-\d{2}-\d{2})$/, nav: "reports", title: "レポート", run: (v, m) => pageReport(v, m[1]) },
   { re: /^\/status$/, nav: "status", title: "状態", run: (v) => pageStatus(v) },
   { re: /^\/login$/, nav: null, title: "ログイン", run: (v, _m, q) => pageLogin(v, q) },
 ];
@@ -910,7 +1300,14 @@ async function render() {
   const url = new URL(location.href);
   renderedPath = url.pathname + url.search;
   const view = document.getElementById("view");
-  const route = ROUTES.map((r) => ({ r, m: r.re.exec(url.pathname) })).find((x) => x.m);
+  // パスの中の ":"(レポートの id)は、サーバーが %3A に直すことがある。照合は復号した形で行う
+  let routePath = url.pathname;
+  try {
+    routePath = decodeURIComponent(url.pathname);
+  } catch {
+    /* 不正な % は、そのまま照合して「見つかりません」にする */
+  }
+  const route = ROUTES.map((r) => ({ r, m: r.re.exec(routePath) })).find((x) => x.m);
 
   document.querySelectorAll("[data-nav]").forEach((a) => {
     if (route && a.dataset.nav === route.r.nav) a.setAttribute("aria-current", "page");
@@ -970,6 +1367,14 @@ window.addEventListener("popstate", () => {
   render();
 });
 
+player.initPlayerUI();
+
+// 固定ヘッダの高さを CSS 変数にする(スティッキーな要素の位置に使う。CSSOM 経由なので CSP に当たらない)
+const topEl = document.querySelector(".top");
+const syncTopHeight = () => document.documentElement.style.setProperty("--top-h", `${topEl.offsetHeight}px`);
+syncTopHeight();
+if ("ResizeObserver" in window) new ResizeObserver(syncTopHeight).observe(topEl);
+
 document.getElementById("drawer-close").addEventListener("click", closeDrawer);
 document.getElementById("drawer-backdrop").addEventListener("click", closeDrawer);
 document.addEventListener("keydown", (ev) => {
@@ -1019,6 +1424,7 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   state.board = new Map();
   state.boardLoaded = false;
   state.status = null;
+  player.stop();
   updateAuthUi();
   navigate("/login");
 });

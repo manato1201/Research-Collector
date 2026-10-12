@@ -23,6 +23,7 @@
       <a href="/" data-link data-nav="home">放送</a>
       <a href="/board" data-link data-nav="board">ボード</a>
       <a href="/weekly" data-link data-nav="weekly">特集</a>
+      <a href="/reports" data-link data-nav="reports">レポート</a>
       <a href="/status" data-link data-nav="status">状態</a>
     </nav>
     <div class="top-actions">
@@ -48,6 +49,35 @@
   </div>
   <div class="drawer-body" id="drawer-body"></div>
 </aside>
+
+<div class="progress-bar" id="progress-bar" hidden aria-hidden="true"></div>
+
+<div class="player" id="player" role="region" aria-label="読み上げプレーヤー" hidden>
+  <div class="player-info">
+    <b id="player-title"></b>
+    <span id="player-chapter"></span>
+    <span class="num" id="player-progress"></span>
+  </div>
+  <div class="player-controls">
+    <button class="icon-btn" id="player-prev" type="button">前の章</button>
+    <button class="icon-btn primary" id="player-toggle" type="button" aria-pressed="false">一時停止</button>
+    <button class="icon-btn" id="player-next" type="button">次の章</button>
+    <button class="icon-btn" id="player-stop" type="button">停止</button>
+    <label class="player-sel"><span class="sr-only">速度</span>
+      <select id="player-rate" aria-label="読み上げの速度">
+        <option value="0.8">0.8倍</option>
+        <option value="1" selected>1倍</option>
+        <option value="1.25">1.25倍</option>
+        <option value="1.5">1.5倍</option>
+        <option value="1.75">1.75倍</option>
+      </select>
+    </label>
+    <label class="player-sel"><span class="sr-only">声</span>
+      <select id="player-voice" aria-label="読み上げの声"></select>
+    </label>
+  </div>
+  <p class="player-note" id="player-note" hidden>日本語の音声が見つかりません。端末の音声設定で日本語の声を追加すると読み上げられます。</p>
+</div>
 
 <div class="toasts" id="toasts" aria-live="polite"></div>
 
