@@ -288,9 +288,11 @@ def run_weekly():
     logger.info("=== Weekly Digest Start ===")
 
     from health import write_health
-    from nbklm import generate_weekly_digest
+    from nbklm import generate_weekly_digest_parts
+    from nbklm.digest import render_digest_markdown
 
-    report_md = generate_weekly_digest()
+    parts = generate_weekly_digest_parts()
+    report_md = render_digest_markdown(parts) if parts else None
 
     if not report_md:
         logger.error("Weekly digest generation failed.")
@@ -304,6 +306,15 @@ def run_weekly():
         f.write(f"# Weekly Research Digest — {date_str}\n\n")
         f.write(report_md)
     logger.info(f"Saved: {output_path} ({len(report_md)} chars)")
+
+    # ResearchBroadcast へ送るための構造化データ(scripts/post_report.py が読む)。
+    # 構造化しておくことで、送る側が Markdown を解析せずにカテゴリごとのセクションを取り出せる。
+    try:
+        import json
+        with open(f"output/weekly_digest_{date_str}.json", "w", encoding="utf-8") as f:
+            json.dump(parts, f, ensure_ascii=False)
+    except Exception as e:
+        logger.warning(f"digest parts save failed (the markdown is saved): {e}")
 
     _save_digest_to_notion(report_md, date_str)
     write_health("weekly", "ok", chars=len(report_md))

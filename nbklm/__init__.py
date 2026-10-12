@@ -2,6 +2,7 @@ from .client import (
     add_articles,
     add_paper,
     generate_weekly_digest,
+    generate_weekly_digest_parts,
     check_auth,
     cleanup_notebooks,
 )
@@ -11,6 +12,7 @@ __all__ = [
     "add_articles",
     "add_paper",
     "generate_weekly_digest",
+    "generate_weekly_digest_parts",
     "check_auth",
     "cleanup_notebooks",
     "NOTEBOOK_IDS_FIXED",
