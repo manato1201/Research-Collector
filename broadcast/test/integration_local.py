@@ -326,7 +326,9 @@ if cats.get("extra"):
     check("article in a configured extra category is accepted", s == 200 and r["accepted"] == 1, (s, r))
     s, r = call("GET", f"/api/articles?category={ex}&status=added")
     check("extra category is filterable", s == 200 and r["total"] == 1 and r["articles"][0]["url_hash"] == "eeeeeeeeeeeeee01", (s, r))
-    s, r = call("GET", f"/api/articles?category={ex}&collected_since={now[:10]}")
+    # collected_at は最初に収集した時刻を保つ(再実行で変わらない)ため、保存されている値の日付で確かめる
+    first_day = call("GET", f"/api/articles?category={ex}&status=added")[1]["articles"][0]["collected_at"][:10]
+    s, r = call("GET", f"/api/articles?category={ex}&collected_since={first_day}")
     check("collected_since finds a paper with an old publication date", r["total"] == 1, r)
     s, r = call("GET", f"/api/articles?category={ex}&since={now[:10]}")
     check("since (publication date) does not", r["total"] == 0, r)
