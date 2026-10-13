@@ -324,6 +324,14 @@ export function buildArticleQuery(searchParams, categories = CATEGORIES) {
 
   if (searchParams.get("review") === "1") clauses.push("review = 1");
 
+  // order: published(既定。公開日の新しい順)/ collected(収集した順。追加カテゴリの「最近入ったもの」向け)
+  const orderParam = searchParams.get("order") ?? "published";
+  if (!["published", "collected"].includes(orderParam)) return { ok: false, error: "bad_order" };
+  const order =
+    orderParam === "collected"
+      ? "collected_at DESC"
+      : "COALESCE(published, substr(collected_at, 1, 10)) DESC, collected_at DESC";
+
   const limit = Number(searchParams.get("limit") ?? 50);
   const offset = Number(searchParams.get("offset") ?? 0);
   if (!Number.isInteger(limit) || limit < 1 || limit > 200)
@@ -335,6 +343,7 @@ export function buildArticleQuery(searchParams, categories = CATEGORIES) {
     ok: true,
     where: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
     params,
+    order,
     limit,
     offset,
   };

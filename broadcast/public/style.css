@@ -1308,3 +1308,176 @@ table.plain td.num {
   font-weight: 700;
   color: var(--text-muted);
 }
+
+/* ---------- ラジオ・広告風の見せ方 ---------- */
+/* ON AIR: 再生中は点灯(紫の面)、それ以外は輪郭だけ。動くのはラジオのページの等化器だけ */
+.onair {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 0.15rem 0.7rem;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  margin-bottom: 0.6rem;
+}
+.onair i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+body[data-air="on"] .onair {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+body[data-air="on"] .onair i {
+  background: var(--accent-ink);
+}
+body[data-air="paused"] .onair i {
+  background: var(--warn);
+}
+.radio-hero {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-end;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+.eq {
+  display: flex;
+  gap: 0.35rem;
+  align-items: flex-end;
+  height: 3.2rem;
+}
+.eq span {
+  width: 0.5rem;
+  height: 22%;
+  background: var(--accent);
+  border-radius: 2px;
+  opacity: 0.35;
+}
+body[data-air="on"] .eq span {
+  opacity: 1;
+  animation: eq-bounce 0.9s ease-in-out infinite alternate;
+}
+.eq span:nth-child(2) {
+  animation-delay: 0.12s;
+}
+.eq span:nth-child(3) {
+  animation-delay: 0.27s;
+}
+.eq span:nth-child(4) {
+  animation-delay: 0.05s;
+}
+.eq span:nth-child(5) {
+  animation-delay: 0.34s;
+}
+.eq span:nth-child(6) {
+  animation-delay: 0.19s;
+}
+.eq span:nth-child(7) {
+  animation-delay: 0.41s;
+}
+@keyframes eq-bounce {
+  from {
+    height: 18%;
+  }
+  to {
+    height: 100%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  body[data-air="on"] .eq span {
+    animation: none;
+    height: 70%;
+  }
+}
+.lamp {
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.14em;
+  padding: 0.05rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+body[data-air="on"] .lamp {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+.player-check {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  display: inline-flex;
+  gap: 0.3rem;
+  align-items: center;
+}
+.guide-title {
+  font-size: 0.95rem;
+  margin-top: 1.5rem;
+}
+.guide {
+  list-style: none;
+  margin-top: 0.5rem;
+}
+.guide-row {
+  display: grid;
+  grid-template-columns: 3.4rem auto minmax(0, 1fr) auto auto;
+  gap: 0.6rem;
+  align-items: center;
+  padding: 0.6rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.guide-row[aria-current="true"] {
+  background: var(--surface2);
+  border-left: 3px solid var(--accent);
+}
+.guide-time,
+.guide-len {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.script {
+  display: grid;
+  gap: 0.8rem;
+  padding: 0 1rem 1rem;
+  font-size: 0.88rem;
+}
+.script h3 {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+/* 注目は、ニュース番組のように番号つきで大きく */
+.list.ranked {
+  counter-reset: rank;
+}
+.list.ranked .item {
+  counter-increment: rank;
+  position: relative;
+  padding-left: 3.4rem;
+}
+.list.ranked .item::before {
+  content: counter(rank, decimal-leading-zero);
+  position: absolute;
+  left: 0;
+  top: 0.35rem;
+  font-family: var(--serif);
+  font-size: 1.7rem;
+  line-height: 1;
+  color: var(--accent);
+}
+@media (max-width: 560px) {
+  .guide-row {
+    grid-template-columns: 3rem minmax(0, 1fr) auto;
+  }
+  .guide-row .badge,
+  .guide-row .guide-len {
+    display: none;
+  }
+}

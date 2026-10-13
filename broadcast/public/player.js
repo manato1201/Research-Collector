@@ -7,12 +7,15 @@
 //  - ページを移動しても続く(プレーヤーはページの外側にある)。ページを閉じると止まる。
 //  - 速度・声は localStorage に覚える(使えなくても動く)。
 
+import { splitChunks } from "./radio-script.js";
+import { jingle } from "./sfx.js";
+
 const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
 export const supported = Boolean(synth);
 
 const KEY_RATE = "rb-tts-rate";
 const KEY_VOICE = "rb-tts-voice";
-const CHUNK_MAX = 140;
+const KEY_SFX = "rb-tts-sfx";
 
 const store = {
   get(k) {
@@ -38,36 +41,11 @@ let status = "idle"; // idle | playing | paused
 let title = "";
 let rate = Number(store.get(KEY_RATE)) || 1;
 let voiceName = store.get(KEY_VOICE) || "";
+let sfxOn = store.get(KEY_SFX) !== "0"; // ジングル(効果音)。既定はオン
+let sleepTimer = null; // setTimeout の id
+let sleepAt = 0; // 停止する時刻(ms)。0 = なし
+let jingleTimer = null;
 const listeners = new Set();
-
-/** 文末(。!?改行)で区切り、約 CHUNK_MAX 字ごとにまとめる。長い1文は読点・字数で割る。 */
-export function splitChunks(text, max = CHUNK_MAX) {
-  const sentences = String(text ?? "")
-    .replace(/\s+/g, " ")
-    .split(/(?<=[。！？!?\n])/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  const out = [];
-  let cur = "";
-  const flush = () => {
-    if (cur) out.push(cur);
-    cur = "";
-  };
-  for (let s of sentences) {
-    while (s.length > max) {
-      // 読点で割れるなら割る。無ければ字数で割る
-      let cut = s.lastIndexOf("、", max);
-      if (cut < max / 3) cut = max - 1;
-      flush();
-      out.push(s.slice(0, cut + 1));
-      s = s.slice(cut + 1);
-    }
-    if ((cur + s).length > max) flush();
-    cur += s;
-  }
-  flush();
-  return out;
-}
 
 function notify() {
   const snap = snapshot();
@@ -84,6 +62,8 @@ export function snapshot() {
     chapterCount: total,
     rate,
     voiceName,
+    sfx: sfxOn,
+    sleepAt,
   };
 }
 
@@ -103,6 +83,7 @@ function pickVoice() {
 
 function finish() {
   token++;
+  clearTimeout(jingleTimer);
   status = "idle";
   queue = [];
   pos = { c: 0, k: 0 };
@@ -125,6 +106,22 @@ function speakCurrent() {
   const ch = queue[pos.c];
   const text = ch?.chunks[pos.k];
   if (text === undefined) return finish();
+  // 章の最初では、ジングルを鳴らしてから話し始める(効果音がオフ・鳴らせない端末では、すぐ話す)
+  if (pos.k === 0 && ch.jingle && sfxOn) {
+    const ms = jingle(ch.jingle);
+    if (ms > 0) {
+      const mine = token;
+      clearTimeout(jingleTimer);
+      jingleTimer = setTimeout(() => {
+        if (mine === token) speakChunk(text);
+      }, ms);
+      return;
+    }
+  }
+  speakChunk(text);
+}
+
+function speakChunk(text) {
   const u = new SpeechSynthesisUtterance(text);
   u.lang = "ja-JP";
   u.rate = rate;
@@ -143,21 +140,32 @@ function speakCurrent() {
 }
 
 /** chapters: [{label, text}]。空の章は飛ばす。読み始めたら true。 */
-export function read({ title: t, chapters }) {
+export function read({ title: t, chapters, startAt = 0 }) {
   if (!supported) return false;
   const q = (chapters ?? [])
-    .map((c) => ({ label: c.label, chunks: splitChunks(c.text) }))
+    .map((c) => ({ label: c.label, jingle: c.jingle ?? null, chunks: splitChunks(c.text) }))
     .filter((c) => c.chunks.length > 0);
   if (q.length === 0) return false;
   token++;
   synth.cancel();
   queue = q;
-  pos = { c: 0, k: 0 };
+  pos = { c: Math.min(Math.max(0, startAt), q.length - 1), k: 0 };
   title = t;
   status = "playing";
-  speakCurrent();
+  speakSoon();
   notify();
   return true;
+}
+
+/**
+ * cancel() の直後に speak() すると、Chrome で取りこぼされることがある。
+ * 短く待ってから話し始める(その間に止められたら、token が変わるので話さない)。
+ */
+function speakSoon() {
+  const mine = token;
+  setTimeout(() => {
+    if (mine === token) speakCurrent();
+  }, 80);
 }
 
 export function pause() {
@@ -187,7 +195,7 @@ export function jump(delta) {
   token++;
   synth.cancel();
   pos = { c, k: 0 };
-  if (status === "playing") speakCurrent();
+  if (status === "playing") speakSoon();
   notify();
 }
 
@@ -204,7 +212,7 @@ export function setRate(r) {
   if (status === "playing") {
     token++;
     synth.cancel();
-    speakCurrent();
+    speakSoon();
   }
   notify();
 }
@@ -215,8 +223,31 @@ export function setVoice(name) {
   if (status === "playing") {
     token++;
     synth.cancel();
-    speakCurrent();
+    speakSoon();
   }
+  notify();
+}
+
+/** minutes 分後に読み上げを止める。0 で解除。 */
+export function setSleep(minutes) {
+  clearTimeout(sleepTimer);
+  sleepTimer = null;
+  sleepAt = 0;
+  const m = Number(minutes) || 0;
+  if (m > 0) {
+    sleepAt = Date.now() + m * 60_000;
+    sleepTimer = setTimeout(() => {
+      sleepAt = 0;
+      stop();
+      notify();
+    }, m * 60_000);
+  }
+  notify();
+}
+
+export function setSfx(on) {
+  sfxOn = Boolean(on);
+  store.set(KEY_SFX, sfxOn ? "1" : "0");
   notify();
 }
 
@@ -239,12 +270,18 @@ export function initPlayerUI() {
   const rateSel = $("player-rate");
   const voiceSel = $("player-voice");
   const noteEl = $("player-note");
+  const sleepSel = $("player-sleep");
+  const sfxBox = $("player-sfx");
+  const lamp = $("player-lamp");
 
   $("player-prev").addEventListener("click", () => jump(-1));
   $("player-next").addEventListener("click", () => jump(1));
   $("player-stop").addEventListener("click", () => stop());
   toggleBtn.addEventListener("click", () => toggle());
   rateSel.addEventListener("change", () => setRate(rateSel.value));
+  sleepSel.addEventListener("change", () => setSleep(sleepSel.value));
+  sfxBox.checked = sfxOn;
+  sfxBox.addEventListener("change", () => setSfx(sfxBox.checked));
   voiceSel.addEventListener("change", () => setVoice(voiceSel.value));
 
   const fillVoices = () => {
@@ -274,6 +311,11 @@ export function initPlayerUI() {
   onChange((s) => {
     bar.hidden = s.status === "idle";
     document.body.classList.toggle("has-player", s.status !== "idle");
+    // ON AIR: 再生中 = on / 一時停止 = paused / 停止 = off(ラジオのページの表示と同期する)
+    document.body.dataset.air = s.status === "playing" ? "on" : s.status === "paused" ? "paused" : "off";
+    lamp.textContent = s.status === "playing" ? "ON AIR" : s.status === "paused" ? "PAUSE" : "STANDBY";
+    sfxBox.checked = s.sfx;
+    if (!s.sleepAt) sleepSel.value = "0";
     titleEl.textContent = s.title;
     chapterEl.textContent = s.chapter;
     progressEl.textContent = s.chapterCount ? `${s.chapterIndex + 1} / ${s.chapterCount}` : "";

@@ -106,7 +106,12 @@ async function route(request, env, url) {
   const report = /^\/api\/reports\/([^/]+)$/.exec(pathname);
   if (report) {
     if (method !== "GET") return methodNotAllowed("GET");
-    const id = decodeURIComponent(report[1]);
+    let id;
+    try {
+      id = decodeURIComponent(report[1]);
+    } catch {
+      return json({ error: "bad_report_id" }, 400);
+    }
     return withAuth(request, env, url, false, () => handleReport(env, id));
   }
 
@@ -433,7 +438,7 @@ async function handleArticles(url, env) {
   const [list, count] = await Promise.all([
     env.DB.prepare(
       `SELECT * FROM articles ${q.where}
-       ORDER BY COALESCE(published, substr(collected_at, 1, 10)) DESC, collected_at DESC
+       ORDER BY ${q.order}
        LIMIT ? OFFSET ?`,
     ).bind(...q.params, q.limit, q.offset).all(),
     env.DB.prepare(`SELECT COUNT(*) AS n FROM articles ${q.where}`).bind(...q.params).first(),
