@@ -40,12 +40,15 @@
 | --- | --- |
 | `/` | 今日の放送。速報ティッカー(停止できる)・注目・カテゴリ別の3レーン・日付の切り替え・全体/カテゴリ別の読み上げ・最新レポートへのリンク・配布サイトの新着(ウォッチ)。複数カテゴリの記事は「ほかのカテゴリにも」バッジ |
 | `/c/<category>` | カテゴリ。今日のヘッドライン・期間(今日 / 今週 / 30日 / 先月。上に固定)・収集元のチップ・要確認のみ・ページの読み上げ |
+| `/radio` | ラジオ。その日の放送を番組(オープニング → 注目 → カテゴリ別のコーナー → エンディング)として聴く。ON AIR・等化器・番組表(コーナーの開始時刻の目安)・スリープタイマー・効果音(ジングル)・原稿の表示 |
 | `/board` | 読む / 試す / 保留。カテゴリで絞り込み |
 | `/weekly[/<YYYY-Www>]` | 週次特集。日別の推移(線が引かれる SVG)・カテゴリ別の件数・章ごとの記事・目次・特集の読み上げ |
 | `/reports` | 週次レポートの一覧(NotebookLM が、その週に集めた記事をカテゴリごとにまとめたダイジェスト) |
 | `/reports/<id>` | レポートの本文。章の目次・読み進めの進捗バー・レポートの読み上げ。Markdown を安全に描画する(HTML・画像・`javascript:` は無効) |
 | `/status` | 取り込みの状態・件数・収集元ごとの取得件数・失敗した収集元・統合された記事・NotebookLM への追加に失敗した記事。取り込みが止まっているとバッジを出す |
 | `/login` | パスワード入力 |
+
+**ファイルの構成**(`public/`): `app.js`(入口・配線のみ)/ `router.js`(ルーター・ステータスバー)/ `store.js`(カテゴリ・API・状態)/ `util.js`(DOM・日付・動きの道具)/ `components.js`(記事の行・ドロワー・読み上げボタン・目次・速報)/ `page-*.js`(各ページ)/ `player.js`(再生バー)/ `radio-script.js`(ラジオ原稿の生成。DOM に依存せず、`npm test` で試験する)/ `sfx.js`(ジングル)/ `markdown.js`(レポートの描画)。
 
 記事を開くドロワーは、Esc で閉じ、フォーカスを内側に閉じ込め、閉じると元の位置へ戻す。`prefers-reduced-motion` では動きを止める。
 
@@ -158,9 +161,9 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。33項目)
-- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(80項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
-- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(78項目。ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。51項目。ラジオ原稿・読み上げの分割を含む)
+- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(88項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
+- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(106項目。ラジオ・追加カテゴリ・「null」文字の混入なし・ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
 ---
 
