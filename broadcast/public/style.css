@@ -1481,3 +1481,109 @@ body[data-air="on"] .lamp {
     display: none;
   }
 }
+
+/* ---------- 検索・既読・設定・ショートカット ---------- */
+.search-mini {
+  flex: 0 1 12rem;
+  min-width: 7rem;
+}
+.search-mini input {
+  width: 100%;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.25rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+}
+.search-form {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  max-width: 34rem;
+}
+.search-form input {
+  flex: 1;
+}
+.stack-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.8rem;
+  max-width: 34rem;
+}
+.plain-list {
+  list-style: none;
+  display: grid;
+  gap: 0.4rem;
+  margin: 0.6rem 0;
+  font-size: 0.88rem;
+}
+.plain-list.cols {
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+.plain-list li {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* 既読は薄く。「既読を隠す」がオンなら、一覧から消す */
+.item.is-read {
+  opacity: 0.5;
+}
+body[data-hide-read="1"] .item.is-read {
+  display: none;
+}
+.item:focus-within {
+  background: var(--surface2);
+}
+.badge.project {
+  border-color: var(--new);
+  color: var(--new);
+}
+.chip.hit {
+  border-color: var(--new);
+  color: var(--text);
+}
+.watchwords-hint {
+  margin-top: 1.5rem;
+}
+.help {
+  position: fixed;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(26rem, calc(100vw - 2rem));
+  z-index: 65;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+}
+.help-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.6rem;
+}
+.help-head h2 {
+  font-size: 0.95rem;
+}
+.help .kv {
+  grid-template-columns: 9.5rem 1fr;
+}
+@media (max-width: 560px) {
+  .search-mini {
+    order: 4;
+    flex-basis: 100%;
+  }
+}
+
+/* オフライン表示(sw.js が、保存済みの内容を返している間) */
+body[data-offline="1"] .status-bar::after {
+  content: "オフライン — 保存済みの内容を表示しています";
+  margin-left: 0.8rem;
+  color: var(--warn);
+  font-weight: 700;
+}

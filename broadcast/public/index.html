@@ -11,6 +11,9 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Noto+Sans+JP:wght@300;400;700&family=DM+Serif+Display&display=swap" rel="stylesheet">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta name="theme-color" content="#5b49d6">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -26,8 +29,14 @@
       <a href="/weekly" data-link data-nav="weekly">特集</a>
       <a href="/reports" data-link data-nav="reports">レポート</a>
       <a href="/status" data-link data-nav="status">状態</a>
+      <a href="/settings" data-link data-nav="settings">設定</a>
     </nav>
+    <form class="search-mini" id="search-form" role="search">
+      <input id="search-input" type="search" placeholder="検索( / )" aria-label="記事を検索" maxlength="60">
+    </form>
     <div class="top-actions">
+      <button class="icon-btn" id="hide-read-btn" type="button" aria-pressed="false" title="既読の記事を一覧から隠します(u)">既読を隠す</button>
+      <button class="icon-btn" id="help-open" type="button" aria-label="キーボードショートカット(?)">?</button>
       <button class="icon-btn" id="theme-btn" type="button" aria-label="テーマを切り替える">テーマ</button>
       <button class="icon-btn" id="logout-btn" type="button" hidden>ログアウト</button>
     </div>
@@ -52,6 +61,20 @@
 </aside>
 
 <div class="progress-bar" id="progress-bar" hidden aria-hidden="true"></div>
+
+<aside class="help" id="help" role="dialog" aria-labelledby="help-title" hidden>
+  <div class="help-head"><h2 id="help-title">キーボードショートカット</h2><button class="icon-btn" id="help-close" type="button">閉じる</button></div>
+  <dl class="kv">
+    <dt class="mono">j / k</dt><dd>次・前の記事へ</dd>
+    <dt class="mono">o</dt><dd>記事の詳細を開く</dd>
+    <dt class="mono">x</dt><dd>既読 ⇄ 未読</dd>
+    <dt class="mono">Shift + x</dt><dd>表示中の未読を、すべて既読に</dd>
+    <dt class="mono">u</dt><dd>既読を隠す ⇄ 表示する</dd>
+    <dt class="mono">/</dt><dd>検索</dd>
+    <dt class="mono">g → h r b w p s</dt><dd>放送 / ラジオ / ボード / 特集 / レポート / 設定へ</dd>
+    <dt class="mono">?</dt><dd>この一覧</dd>
+  </dl>
+</aside>
 
 <div class="player" id="player" role="region" aria-label="読み上げプレーヤー" hidden>
   <div class="player-info">

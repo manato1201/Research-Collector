@@ -74,6 +74,40 @@ function lineChart({ title, rows, note }) {
   return fig;
 }
 
+/** 今週よく出た語と、先週との差。新出(先週は無かった語)と、増えた語を目立たせる。語を押すと検索へ。 */
+function buildKeywords(keywords, prevTotal) {
+  return h(
+    "section",
+    { id: "sec-keywords", class: "chapter" },
+    h("h2", null, "今週のキーワード"),
+    h(
+      "p",
+      { class: "sub" },
+      prevTotal ? `先週(新着${prevTotal}件)との差。「新」は先週は出なかった語、「+n」は先週より増えた件数です。` : "先週のデータが無いため、差は出していません。",
+    ),
+    h(
+      "div",
+      { class: "source-chips" },
+      ...keywords.map((k) => {
+        const diff = k.count - k.prev;
+        return h(
+          "a",
+          {
+            class: `chip${k.new && prevTotal ? " hit" : ""}`,
+            href: `/search?q=${encodeURIComponent(k.word)}`,
+            "data-link": "",
+            title: `今週 ${k.count}件 / 先週 ${k.prev}件`,
+          },
+          k.word,
+          h("span", { class: "n" }, String(k.count)),
+          prevTotal && k.new ? h("span", { class: "badge" }, "新") : null,
+          prevTotal && !k.new && diff >= 2 ? h("span", { class: "badge" }, `+${diff}`) : null,
+        );
+      }),
+    ),
+  );
+}
+
 export async function pageWeekly(view, label) {
   mount(view, renderSkeleton());
   const [res, datesRes] = await Promise.all([
@@ -97,7 +131,9 @@ export async function pageWeekly(view, label) {
     ...datesRes.dates.map((w) => h("option", { value: w, selected: w === res.date }, w)),
   );
 
+  const keywords = d.keywords ?? [];
   const sections = [{ id: "sec-summary", label: "概要" }, { id: "sec-figures", label: "図" }];
+  if (keywords.length) sections.push({ id: "sec-keywords", label: "キーワード" });
   for (const ch of d.chapters) sections.push({ id: `sec-${ch.category}`, label: catLabel(ch.category) });
 
   const toc = h(
@@ -144,6 +180,7 @@ export async function pageWeekly(view, label) {
       d.highlights?.length ? h("ul", { class: "list" }, ...d.highlights.map((a) => renderItem(a, { showCategoryBadge: false }))) : null,
     ),
     h("section", { id: "sec-figures", class: "chapter" }, dailyFig, catFig),
+    keywords.length ? buildKeywords(keywords, d.prev_total) : null,
     ...chapters,
   );
 

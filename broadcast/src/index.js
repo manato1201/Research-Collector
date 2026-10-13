@@ -12,6 +12,12 @@
 //   PUT  /api/board/{url_hash} | DELETE /api/board/{url_hash}
 //   GET  /api/reports      週次レポート(ダイジェスト)の一覧 / GET /api/reports/{id} 本文
 //   GET  /api/watch        配布サイトの新着(通知のみ)
+//   GET  /api/search?q=     記事の検索(3文字以上は全文検索 FTS5 trigram、短い語は LIKE)
+//   GET  /api/watchwords    ウォッチワードごとの直近7日の件数と新着
+//   GET  /api/prefs / PUT /api/prefs/{key}   設定(ウォッチワード・関連プロジェクト・非表示の収集元)
+//   GET  /api/sources       収集元ごとの件数(非表示の設定に使う)
+//   POST /api/board/bulk    ボードをまとめて更新(既読にする等。最大200件)
+//   GET  /api/export?table=…&offset=…   バックアップ用の書き出し(Bearer のみ。ページごと)
 //   GET  /api/status        件数(URL単位)・カテゴリ別・直近の取り込み・失敗した収集元
 //   GET  /api/health        生存確認(認証なし。データは返さない)
 // それ以外は静的アセット(public/。サイトの本体)。サイト自体にデータは入っていない。
@@ -31,10 +37,15 @@ import {
   buildArticleQuery,
   buildEpisodeQuery,
   isUrlHash,
+  EXPORT_TABLES,
+  escapeLike,
   MAX_BODY_BYTES,
+  PREF_KEYS,
+  parseSearch,
   resolveCategories,
   validateBoardInput,
   validateIngest,
+  validatePref,
 } from "./validate.js";
 
 const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
@@ -92,6 +103,25 @@ async function route(request, env, url) {
   }
 
   // ---- 読み出し・ボード(Bearer か ログイン済みの Cookie)
+  if (pathname === "/api/board/bulk") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    return withAuth(request, env, url, true, () => handleBoardBulk(request, env));
+  }
+
+  // バックアップ用の書き出しは、機械(Bearer)だけ。Cookie では許可しない
+  if (pathname === "/api/export") {
+    if (method !== "GET") return methodNotAllowed("GET");
+    const denied = await requireBearer(request, env);
+    if (denied) return denied;
+    return handleExport(url, env);
+  }
+
+  const pref = /^\/api\/prefs\/([a-z_]+)$/.exec(pathname);
+  if (pref) {
+    if (method !== "PUT") return methodNotAllowed("PUT");
+    return withAuth(request, env, url, true, () => handlePrefWrite(request, env, pref[1]));
+  }
+
   const board = /^\/api\/board(?:\/([^/]+))?$/.exec(pathname);
   if (board) {
     if (board[1] === undefined) {
@@ -118,6 +148,10 @@ async function route(request, env, url) {
   const reads = {
     "/api/articles": () => handleArticles(url, env),
     "/api/categories": () => handleCategories(env),
+    "/api/search": () => handleSearch(url, env),
+    "/api/watchwords": () => handleWatchwords(env),
+    "/api/prefs": () => handlePrefsRead(env),
+    "/api/sources": () => handleSources(env),
     "/api/episodes": () => handleEpisodes(url, env),
     "/api/episodes/dates": () => handleEpisodeDates(url, env),
     "/api/status": () => handleStatus(env),
@@ -558,6 +592,162 @@ async function handleWatch(env) {
     "SELECT watch, title, url, detected_at FROM watch ORDER BY detected_at DESC LIMIT 50",
   ).all();
   return json({ items: rows.results });
+}
+
+// ------------------------------------------------------------------ 検索・設定・エクスポート
+
+/** 検索の SQL(全文検索か LIKE か)と束縛値。count=true なら件数、そうでなければ記事の行。 */
+function buildSearchSql(parsed, { count = false, since = null, limit = 50 } = {}) {
+  const params = [];
+  let from;
+  const where = ["a.status = 'added'"];
+  if (parsed.useFts) {
+    from = "articles_fts JOIN articles a ON a.rowid = articles_fts.rowid";
+    where.unshift("articles_fts MATCH ?");
+    params.push(parsed.match);
+  } else {
+    from = "articles a";
+    for (const t of parsed.terms) {
+      where.push("(a.title LIKE ? ESCAPE '\\' OR COALESCE(a.summary, '') LIKE ? ESCAPE '\\')");
+      const pat = `%${escapeLike(t)}%`;
+      params.push(pat, pat);
+    }
+  }
+  if (since) {
+    where.push("substr(a.collected_at, 1, 10) >= ?");
+    params.push(since);
+  }
+  let sql = `SELECT ${count ? "COUNT(*) AS n" : "a.*"} FROM ${from} WHERE ${where.join(" AND ")}`;
+  if (!count) {
+    sql += " ORDER BY COALESCE(a.published, substr(a.collected_at, 1, 10)) DESC, a.collected_at DESC LIMIT ?";
+    params.push(limit);
+  }
+  return { sql, params };
+}
+
+async function handleSearch(url, env) {
+  const parsed = parseSearch(url.searchParams.get("q"));
+  if (!parsed.ok) return json({ error: parsed.error }, 400);
+  const limit = Math.min(100, Math.max(1, Number(url.searchParams.get("limit")) || 50));
+  const { sql, params } = buildSearchSql(parsed, { limit });
+  const rows = await env.DB.prepare(sql).bind(...params).all();
+  return json({ q: url.searchParams.get("q").trim(), mode: parsed.useFts ? "fts" : "like", articles: rows.results.map(rowToArticle) });
+}
+
+async function readPrefs(env) {
+  const rows = await env.DB.prepare("SELECT key, value FROM prefs").all();
+  const out = { watchwords: [], muted_sources: [], projects: [] };
+  for (const r of rows.results) {
+    try {
+      out[r.key] = JSON.parse(r.value);
+    } catch {
+      /* 壊れた値は無視する */
+    }
+  }
+  return out;
+}
+
+async function handlePrefsRead(env) {
+  return json(await readPrefs(env));
+}
+
+async function handlePrefWrite(request, env, key) {
+  if (!PREF_KEYS.includes(key)) return json({ error: "unknown_pref" }, 404);
+  const text = await readBodyLimited(request, 10_000);
+  if (text === null) return json({ error: "payload_too_large" }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const v = validatePref(key, body?.value);
+  if (!v.ok) return json({ error: v.error }, 400);
+  await env.DB.prepare(UPSERT_PREF_SQL).bind(key, JSON.stringify(v.value), new Date().toISOString()).run();
+  return json({ ok: true, key, value: v.value });
+}
+
+const UPSERT_PREF_SQL = `
+INSERT INTO prefs (key, value, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`;
+
+/** ウォッチワードごとの、直近7日(収集した日)の件数と、新しい記事の見出し(3件)。 */
+async function handleWatchwords(env) {
+  const { watchwords } = await readPrefs(env);
+  if (!watchwords.length) return json({ items: [] });
+  const since = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10);
+  const parsedAll = watchwords.map((w) => ({ word: w, parsed: parseSearch(w) })).filter((x) => x.parsed.ok);
+  const statements = [];
+  for (const { parsed } of parsedAll) {
+    const c = buildSearchSql(parsed, { count: true, since });
+    const l = buildSearchSql(parsed, { since, limit: 3 });
+    statements.push(env.DB.prepare(c.sql).bind(...c.params), env.DB.prepare(l.sql).bind(...l.params));
+  }
+  const results = statements.length ? await env.DB.batch(statements) : [];
+  const items = parsedAll.map(({ word }, i) => ({
+    word,
+    count: results[i * 2].results[0]?.n ?? 0,
+    latest: results[i * 2 + 1].results.map((r) => ({ url_hash: r.url_hash, url: r.url, title: r.title, published: r.published })),
+  }));
+  return json({ since, items });
+}
+
+async function handleSources(env) {
+  const rows = await env.DB.prepare(
+    "SELECT platform, COUNT(*) AS n FROM articles WHERE status = 'added' GROUP BY platform ORDER BY n DESC",
+  ).all();
+  return json({ sources: rows.results });
+}
+
+/** バックアップ用: テーブルをページごとに書き出す(呼び出し側が next をたどる)。CPU 時間を抑えるため1回 最大200行。 */
+async function handleExport(url, env) {
+  const table = url.searchParams.get("table") ?? "";
+  if (!EXPORT_TABLES.includes(table)) return json({ error: "bad_table", tables: EXPORT_TABLES }, 400);
+  const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
+  const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit")) || 100));
+  // table は許可リストの中のものだけ(SQL に直接入れて安全)
+  const rows = await env.DB.prepare(`SELECT * FROM ${table} ORDER BY rowid LIMIT ? OFFSET ?`).bind(limit, offset).all();
+  const n = rows.results.length;
+  return json({ table, offset, count: n, next: n === limit ? offset + n : null, rows: rows.results });
+}
+
+async function handleBoardBulk(request, env) {
+  const text = await readBodyLimited(request, 20_000);
+  if (text === null) return json({ error: "payload_too_large" }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const hashes = Array.isArray(body?.hashes) ? [...new Set(body.hashes)] : null;
+  if (!hashes || hashes.length === 0 || hashes.length > 200 || !hashes.every(isUrlHash)) {
+    return json({ error: "bad_hashes" }, 400);
+  }
+  const v = validateBoardInput({ state: body.state, note: "" });
+  if (!v.ok) return json({ error: v.error }, 400);
+
+  const nowIso = new Date().toISOString();
+  let statements;
+  if (v.state === "unread") {
+    statements = hashes.map((h) => env.DB.prepare("DELETE FROM board WHERE url_hash = ?").bind(h));
+  } else if (v.state === "read") {
+    // 「まとめて既読」は、すでに 読む / 試す / 保留 に入れた記事の状態を上書きしない
+    statements = hashes.map((h) =>
+      env.DB.prepare(
+        "INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, 'read', '', ?) ON CONFLICT(url_hash) DO NOTHING",
+      ).bind(h, nowIso),
+    );
+  } else {
+    statements = hashes.map((h) =>
+      env.DB.prepare(
+        `INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, '', ?)
+         ON CONFLICT(url_hash) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+      ).bind(h, v.state, nowIso),
+    );
+  }
+  await runInBatches(env.DB, statements);
+  return json({ ok: true, state: v.state, count: hashes.length });
 }
 
 // ------------------------------------------------------------------ ボード
