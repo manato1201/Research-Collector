@@ -14,6 +14,7 @@ Worker の CPU 時間が 10ms に制限される。生成は GitHub Actions(無�
 - ローカル限定の分野は articles_log に書かれないため、ここにも出ない。念のため3カテゴリ外は除く。
 """
 
+import re
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
@@ -170,6 +171,67 @@ def _source_counts(entries: list[dict]) -> list[dict]:
     return [{"platform": k, "count": v} for k, v in sorted(c.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
+# ------------------------------------------------------------------ キーワード(週次の差分)
+
+# 見出しによく出るが、話題を表さない語(リリースノートの動詞・冠詞など)
+_STOP = frozenset("""
+the and for with from that this into your you are can how what why when about more all not has have will via per its
+new now use using used add adds added fix fixes fixed improve improved improvements update updated updates support
+supports supported change changes changed release released releases notes note version versions bug bugs issue issues
+blog docs doc guide tutorial introduction intro overview part vs get got make makes made one two top best
+is in on of to at by or as an it be we our out up if do no but not than then also only over under after before
+""".split())
+
+_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+#]*(?:[.\-][A-Za-z0-9+#]+)*")
+_KATAKANA_RE = re.compile(r"[ァ-ヶー]{3,}")
+
+
+def _tokens(entry: dict) -> set[str]:
+    """記事1本の、話題を表す語(英字の語・カタカナ語)。同じ語は1回と数える。"""
+    text = " ".join([str(entry.get("title", "")), " ".join(str(k) for k in (entry.get("keywords") or []) if not str(k).startswith("source:"))])
+    out: set[str] = set()
+    for w in _WORD_RE.findall(text):
+        key = w.lower()
+        if len(key) < 3 or key in _STOP or key.isdigit():
+            continue
+        out.add(key)
+    for w in _KATAKANA_RE.findall(text):
+        out.add(w)
+    return out
+
+
+def _display(word: str, entries: list[dict]) -> str:
+    """表示用の綴り(記事の中で最初に見つかった綴り)。無ければそのまま。"""
+    for e in entries:
+        for w in _WORD_RE.findall(str(e.get("title", ""))):
+            if w.lower() == word:
+                return w
+    return word
+
+
+def week_keywords(members: list[dict], prev_members: list[dict], limit: int = 12) -> list[dict]:
+    """
+    今週よく出た語と、先週との差。count = その語を含む記事の数、prev = 先週の数、new = 先週は無かった語。
+    1本の記事にしか出ない語は、記事が少ない週(合計6本未満)のときだけ載せる。
+    """
+    def count(entries):
+        c: dict[str, int] = {}
+        for e in _uniq(entries):
+            for t in _tokens(e):
+                c[t] = c.get(t, 0) + 1
+        return c
+
+    now, before = count(members), count(prev_members)
+    floor = 2 if len(_uniq(members)) >= 6 else 1
+    rows = [
+        {"word": _display(w, members), "count": n, "prev": before.get(w, 0), "new": before.get(w, 0) == 0}
+        for w, n in now.items() if n >= floor
+    ]
+    # 新出を先に、次に増えた語、次に件数。同じなら語の順で、結果が毎回同じになるようにする
+    rows.sort(key=lambda r: (not r["new"], -(r["count"] - r["prev"]), -r["count"], r["word"].lower()))
+    return rows[:limit]
+
+
 # ------------------------------------------------------------------ 週次
 
 def week_label(day: date) -> str:
@@ -190,6 +252,8 @@ def build_weekly(entries: list[dict], label: str) -> list[dict]:
     members = [e for e in entries if _valid(e) and _entry_date(e) in days]
     if not members:
         return []
+    prev_days = [(date.fromisoformat(d) - timedelta(days=7)).strftime("%Y-%m-%d") for d in days]
+    prev_members = [e for e in entries if _valid(e) and _entry_date(e) in prev_days]
 
     ordered = _order(members)
     counts = _counts(members)
@@ -223,6 +287,9 @@ def build_weekly(entries: list[dict], label: str) -> list[dict]:
             "daily": daily,
             "highlights": [_item(e) for e in _uniq(ordered)[:3]],
             "chapters": chapters,
+            # 今週よく出た語と、先週との差(新出・増えた語)。サイトの特集に出す
+            "keywords": week_keywords(members, prev_members),
+            "prev_total": len(_uniq(prev_members)),
         },
     }]
 

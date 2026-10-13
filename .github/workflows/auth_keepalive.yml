@@ -3,9 +3,14 @@ name: Auth Keepalive
 # NotebookLMのセッション用Cookie(__Secure-1PSIDTS)は15〜20分ごとに
 # ローテーションしないと失効する。notebooklm-py 0.7.3 の `auth refresh` で
 # 定期的にローテーションさせ、その結果をSecretへ書き戻す。
+# 【定期実行は止めてある(2026-10-13)】
+# GitHub の定期実行は、`*/15` と書いても実際は4〜6時間おきにしか動かず、直近約40回がすべて失敗していた
+# (Cookie のローテーションは15〜20分おきが前提のため、この方式では維持できない)。失敗のたびに
+# auth-expired の Issue が開き、本当の認証切れとの区別がつかなくなっていた。
+# 認証の更新は、手元の PC のタスク(run_auth_refresh.bat → refresh_auth.ps1)が担う。
+# 認証切れは、日次・週次の失敗(Issue と、NTFY_TOPIC / SLACK_WEBHOOK_URL への通知)で気づける。
+# 手動での実行(workflow_dispatch)は、これまでどおり使える。
 on:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 jobs:
