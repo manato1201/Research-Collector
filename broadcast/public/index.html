@@ -21,6 +21,7 @@
     <a class="brand" href="/" data-link>Research Broadcast</a>
     <nav class="tabs-nav" aria-label="メイン">
       <a href="/" data-link data-nav="home">放送</a>
+      <a href="/radio" data-link data-nav="radio">ラジオ</a>
       <a href="/board" data-link data-nav="board">ボード</a>
       <a href="/weekly" data-link data-nav="weekly">特集</a>
       <a href="/reports" data-link data-nav="reports">レポート</a>
@@ -54,6 +55,7 @@
 
 <div class="player" id="player" role="region" aria-label="読み上げプレーヤー" hidden>
   <div class="player-info">
+    <span class="lamp" id="player-lamp">STANDBY</span>
     <b id="player-title"></b>
     <span id="player-chapter"></span>
     <span class="num" id="player-progress"></span>
@@ -72,6 +74,15 @@
         <option value="1.75">1.75倍</option>
       </select>
     </label>
+    <label class="player-sel"><span class="sr-only">スリープタイマー</span>
+      <select id="player-sleep" aria-label="スリープタイマー(自動で止める)">
+        <option value="0">タイマー: なし</option>
+        <option value="15">15分で停止</option>
+        <option value="30">30分で停止</option>
+        <option value="60">60分で停止</option>
+      </select>
+    </label>
+    <label class="player-check"><input type="checkbox" id="player-sfx" checked> 効果音</label>
     <label class="player-sel"><span class="sr-only">声</span>
       <select id="player-voice" aria-label="読み上げの声"></select>
     </label>

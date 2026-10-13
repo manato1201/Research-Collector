@@ -144,8 +144,8 @@ with sync_playwright() as p:
     page.goto(BASE + "/")
     page.wait_for_selector(".lanes")
     page.wait_for_timeout(300)
-    read_all = page.locator("button.read-btn", has_text="全体を読み上げ")
-    check("home: read-aloud button exists", read_all.count() == 1)
+    read_all = page.locator("button.read-btn", has_text="番組を再生(ラジオ)")
+    check("home: radio program button exists", read_all.count() == 1)
     check("home: read-aloud button is enabled (or explains why not)",
           read_all.is_enabled() or bool(read_all.get_attribute("title")))
     check("home: per-category read buttons", page.locator("button.read-btn", has_text="このカテゴリを読み上げ").count() >= 1)
@@ -226,6 +226,52 @@ with sync_playwright() as p:
     page.wait_for_selector(".panel")
     check("status: per-source counts and report/watch counts shown",
           "収集元ごとの取得件数" in page.inner_text("main") and "ウォッチ" in page.inner_text("main"))
+
+    # --- ラジオ(番組・番組表・ジングル・ON AIR・スリープ・効果音)
+    page.goto(BASE + "/")
+    page.wait_for_selector(".lanes")
+    check("home: ON AIR badge and numbered headlines", page.locator(".onair").count() == 1 and page.locator(".list.ranked .item").count() >= 1)
+    check("home: link to the radio page", page.locator("a.btn", has_text="ラジオを開く").count() == 1)
+    page.click("nav a[data-nav=radio]")
+    page.wait_for_selector(".guide-row")
+    check("radio: program guide has opening, headlines, corners and ending",
+          page.locator(".guide-row").count() >= 4
+          and "オープニング" in page.inner_text(".guide-row >> nth=0")
+          and "エンディング" in page.inner_text(".guide-row >> nth=-1"))
+    check("radio: guide shows estimated clock times", page.locator(".guide-time").first.inner_text() == "00:00")
+    check("radio: equalizer and ON AIR badge exist", page.locator(".eq span").count() == 7 and page.locator(".onair").count() == 1)
+    check("radio: body starts in the off-air state", page.evaluate("document.body.dataset.air || 'off'") == "off")
+    if page.locator("button:has-text('番組を再生')").is_enabled():
+        page.click("button:has-text('番組を再生')")
+        page.wait_for_selector("#player:not([hidden])", timeout=5000)
+        check("radio: ON AIR lamp is lit while playing", page.evaluate("document.body.dataset.air") == "on" and page.inner_text("#player-lamp") == "ON AIR")
+        check("radio: the current corner is marked in the guide", page.locator(".guide-row[aria-current=true]").count() == 1)
+        page.locator(".guide-row >> nth=2").locator("button").click()
+        page.wait_for_timeout(200)
+        check("radio: jumping to a corner moves the program", page.inner_text("#player-progress").startswith("3 /"))
+        page.click("#player-toggle")
+        check("radio: pause turns the lamp to PAUSE", page.inner_text("#player-lamp") == "PAUSE" and page.evaluate("document.body.dataset.air") == "paused")
+        page.select_option("#player-sleep", "15")
+        check("radio: sleep timer can be set", page.evaluate("document.getElementById('player-sleep').value") == "15")
+        page.uncheck("#player-sfx")
+        check("radio: sound effects can be turned off and the choice is remembered",
+              page.evaluate("localStorage.getItem('rb-tts-sfx')") == "0")
+        page.check("#player-sfx")
+        page.click("#player-stop")
+        check("radio: stop returns to off-air", page.evaluate("document.body.dataset.air") == "off" and page.locator("#player").is_hidden())
+    check("radio: the script can be read as text", page.locator("details.acc summary", has_text="原稿").count() == 1)
+
+    # --- 画面に「null」「undefined」が文字として出ていない(条件つきの部品が null のとき)
+    paths = ["/", "/radio", "/board", "/weekly", "/reports", "/status", "/c/game_dev_tech", "/c/software_engineering"]
+    if n_extra:
+        extra_ids = page.evaluate("fetch('/api/categories').then(r => r.json()).then(j => j.extra.map(e => e.id))")
+        paths += [f"/c/{i}" for i in extra_ids]
+    for path in paths:
+        page.goto(BASE + path)
+        page.wait_for_selector("main h1", timeout=10000)
+        page.wait_for_timeout(250)
+        body = page.inner_text("main")
+        check(f"{path}: no stray 'null' / 'undefined' text", not re.search(r"(null|undefined)", body), body[:120])
 
     # --- テーマ
     before = page.evaluate("document.documentElement.getAttribute('data-theme')")
