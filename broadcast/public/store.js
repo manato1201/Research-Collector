@@ -14,8 +14,9 @@ export const LABELS = {
 export let EXTRA = []; // [{id, label}]
 export const allCategoryIds = () => [...CATEGORIES, ...EXTRA.map((e) => e.id)];
 
-export const BOARD_LABELS = { reading: "読む", try: "試す", hold: "保留" };
-export const BOARD_ORDER = ["reading", "try", "hold"];
+export const BOARD_LABELS = { reading: "読む", try: "試す", hold: "保留", read: "既読" };
+export const BOARD_ORDER = ["reading", "try", "hold"]; // ボードのページの列(「既読」は列にしない)
+export const DRAWER_STATES = ["unread", ...BOARD_ORDER, "read"];
 export const STALE_HOURS = 20; // 12時間おきの実行。これを超えて取り込みが無ければ「止まっている可能性」と出す
 
 export function catLabel(c) {
@@ -57,6 +58,8 @@ export const state = {
   board: new Map(), // url_hash -> {state, note}
   boardLoaded: false,
   categoriesLoaded: false,
+  prefs: { watchwords: [], muted_sources: [], projects: [] },
+  prefsLoaded: false,
   session: { authenticated: false, via: null, login_enabled: false },
   status: null,
   statusAt: 0,
@@ -78,6 +81,61 @@ export async function loadCategories() {
   state.categoriesLoaded = true;
 }
 
+/** 設定(ウォッチワード・非表示の収集元・関連プロジェクト)。 */
+export async function loadPrefs(force = false) {
+  if (state.prefsLoaded && !force) return;
+  const p = await api("/api/prefs");
+  state.prefs = {
+    watchwords: p.watchwords ?? [],
+    muted_sources: p.muted_sources ?? [],
+    projects: p.projects ?? [],
+  };
+  state.prefsLoaded = true;
+}
+
+export async function savePref(key, value) {
+  const res = await api(`/api/prefs/${key}`, { method: "PUT", body: { value } });
+  state.prefs = { ...state.prefs, [key]: res.value };
+  return res.value;
+}
+
+export const isMuted = (platform) => state.prefs.muted_sources.includes(platform);
+
+/** 非表示の収集元を除いた記事。 */
+export const unmuted = (articles) => articles.filter((a) => !isMuted(a.platform));
+
+/** API の問い合わせに足す、非表示の収集元(exclude_platforms)。 */
+export function excludeParam() {
+  const m = state.prefs.muted_sources;
+  return m.length ? `&exclude_platforms=${encodeURIComponent(m.join(","))}` : "";
+}
+
+/** 記事に当てはまる関連プロジェクトの名前(題名・要約・キーワードに、プロジェクトのキーワードが含まれる)。 */
+export function projectsFor(a) {
+  const hay = `${a.title ?? ""} ${a.summary ?? ""} ${(a.keywords ?? []).join(" ")}`.toLowerCase();
+  return state.prefs.projects
+    .filter((p) => p.keywords.some((k) => hay.includes(k.toLowerCase())))
+    .map((p) => p.name);
+}
+
+// 「既読を隠す」(この端末だけの設定)
+const HIDE_READ_KEY = "rb-hide-read";
+export function getHideRead() {
+  try {
+    return localStorage.getItem(HIDE_READ_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+export function setHideRead(on) {
+  document.body.dataset.hideRead = on ? "1" : "0";
+  try {
+    localStorage.setItem(HIDE_READ_KEY, on ? "1" : "0");
+  } catch {
+    /* 保存できなくても動く */
+  }
+}
+
 export async function loadStatus(force = false) {
   if (!force && state.status && Date.now() - state.statusAt < 60_000) return state.status;
   state.status = await api("/api/status");
@@ -92,6 +150,8 @@ export function resetSessionState() {
   state.board = new Map();
   state.boardLoaded = false;
   state.categoriesLoaded = false;
+  state.prefs = { watchwords: [], muted_sources: [], projects: [] };
+  state.prefsLoaded = false;
   EXTRA = [];
   state.status = null;
 }

@@ -2,11 +2,14 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { formatDateTime, h, jstToday, shortDate, toast } from "./util.js";
-import { AuthError, BOARD_LABELS, BOARD_ORDER, api, catLabel, cleanup, dot, state } from "./store.js";
+import { AuthError, BOARD_LABELS, DRAWER_STATES, api, catLabel, cleanup, dot, projectsFor, state } from "./store.js";
 import { navigate } from "./router.js";
 import * as player from "./player.js";
 
 // ------------------------------------------------------------------ 共通の部品
+
+/** 一覧の行(li)→ 記事。キーボード操作(j/k/o/x)が、行から記事を取り出すために使う。 */
+export const itemData = new WeakMap();
 
 export const isNewToday = (a) => (a.collected_at ?? "").slice(0, 10) === jstToday();
 
@@ -26,16 +29,23 @@ export function renderItem(a, { showCategoryBadge = true } = {}) {
     );
   }
   if (a.review) meta.append(h("span", { class: "badge warn", title: "分類に自信がありません。人の確認が必要です" }, "要確認"));
-  if (board) meta.append(h("span", { class: "badge state", title: "ボードに入れた状態" }, BOARD_LABELS[board.state] ?? board.state));
+  // 「既読」は、バッジではなく薄い表示で表す(一覧がバッジだらけにならないように)
+  if (board && board.state !== "read") {
+    meta.append(h("span", { class: "badge state", title: "ボードに入れた状態" }, BOARD_LABELS[board.state] ?? board.state));
+  }
+  for (const name of projectsFor(a)) {
+    meta.append(h("span", { class: "badge project", title: "設定した関連プロジェクトのキーワードに当てはまります" }, `# ${name}`));
+  }
 
   const li = h(
     "li",
-    { class: "item", dataset: { hash: a.url_hash } },
+    { class: `item${board?.state === "read" ? " is-read" : ""}`, dataset: { hash: a.url_hash } },
     h("button", { class: "item-title", type: "button", onclick: () => openDrawer(a) }, a.title),
     h("time", { class: "item-date mono" }, shortDate(a.published ?? a.collected_at ?? "")),
     meta,
   );
   if (a.summary) li.append(h("p", { class: "item-sum" }, a.summary));
+  itemData.set(li, a);
   return li;
 }
 
@@ -101,7 +111,16 @@ export function buildDrawerBody(a) {
   const sum = a.summary ? h("p", { class: "drawer-sum" }, a.summary) : null;
   const open = h(
     "a",
-    { class: "btn primary", href: a.url ?? "#", target: "_blank", rel: "noopener noreferrer" },
+    {
+      class: "btn primary",
+      href: a.url ?? "#",
+      target: "_blank",
+      rel: "noopener noreferrer",
+      // 記事を開いたら、まだ何も付けていない記事は「既読」にする(読む / 試す / 保留 は、そのまま)
+      onclick: () => {
+        if (!state.board.has(a.url_hash)) markQuietly(a, refresh);
+      },
+    },
     "記事を開く",
   );
 
@@ -119,7 +138,7 @@ export function buildDrawerBody(a) {
   const refresh = () => {
     const now = state.board.get(a.url_hash)?.state ?? "unread";
     stateBox.replaceChildren(
-      ...["unread", ...BOARD_ORDER].map((s) =>
+      ...DRAWER_STATES.map((s) =>
         h(
           "button",
           {
@@ -152,7 +171,9 @@ export async function setBoard(article, newState, note, rerender) {
       state.board.set(article.url_hash, { state: newState, note: note.trim() });
     }
     rerender();
-    toast(newState === "unread" ? "未読に戻しました" : `「${BOARD_LABELS[newState]}」に入れました`);
+    toast(
+      newState === "unread" ? "未読に戻しました" : newState === "read" ? "既読にしました" : `「${BOARD_LABELS[newState]}」に入れました`,
+    );
     refreshItemBadges(article.url_hash);
   } catch (err) {
     if (err instanceof AuthError) return navigate("/login");
@@ -165,7 +186,47 @@ export function refreshItemBadges(hash) {
   const board = state.board.get(hash);
   for (const li of document.querySelectorAll(`#view .item[data-hash="${hash}"]`)) {
     li.querySelector(".badge.state")?.remove();
-    if (board) li.querySelector(".item-meta")?.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
+    li.classList.toggle("is-read", board?.state === "read");
+    if (board && board.state !== "read") {
+      li.querySelector(".item-meta")?.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
+    }
+  }
+}
+
+/** 通知を出さずに既読にする(記事のリンクを開いたときなど)。失敗しても、記事は開ける。 */
+async function markQuietly(article, rerender) {
+  try {
+    await api(`/api/board/${article.url_hash}`, { method: "PUT", body: { state: "read", note: "" } });
+    state.board.set(article.url_hash, { state: "read", note: "" });
+    rerender?.();
+    refreshItemBadges(article.url_hash);
+  } catch {
+    /* 既読にできなくても、読むのは妨げない */
+  }
+}
+
+/**
+ * 一覧の記事を、まとめて既読にする(最大200件。読む / 試す / 保留 に入れたものは、そのまま)。
+ * @returns {Promise<number>} 新しく既読になった件数
+ */
+export async function markAllRead(articles) {
+  const targets = articles.filter((a) => !state.board.has(a.url_hash)).slice(0, 200);
+  if (!targets.length) {
+    toast("未読の記事はありません");
+    return 0;
+  }
+  try {
+    await api("/api/board/bulk", { method: "POST", body: { hashes: targets.map((a) => a.url_hash), state: "read" } });
+    for (const a of targets) {
+      state.board.set(a.url_hash, { state: "read", note: "" });
+      refreshItemBadges(a.url_hash);
+    }
+    toast(`${targets.length}件を既読にしました`);
+    return targets.length;
+  } catch (err) {
+    if (err instanceof AuthError) navigate("/login");
+    else toast("既読にできませんでした。時間をおいてやり直してください", true);
+    return 0;
   }
 }
 
