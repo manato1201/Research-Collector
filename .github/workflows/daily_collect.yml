@@ -75,6 +75,26 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: python scripts/post_ingest.py
 
+      # 放送が出たこと(新着の要約)をスマホへ通知する。任意の工程: NTFY_TOPIC / SLACK_WEBHOOK_URL が無ければ何もしない。
+      - name: Notify new articles (optional)
+        if: success()
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+        run: python scripts/notify.py digest --window-hours 2
+
+      # 収集が失敗したら、スマホへ知らせる(GitHub の Issue とは別に。任意の工程)
+      - name: Notify failure (optional)
+        if: failure()
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+        run: python scripts/notify.py failure --workflow "Daily Research Collect" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - name: Commit health status
         if: always()
         continue-on-error: true
