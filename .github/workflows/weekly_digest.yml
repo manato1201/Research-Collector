@@ -66,6 +66,24 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: python scripts/post_report.py "output/weekly_digest_*.md"
 
+      - name: Notify weekly report (optional)
+        if: success()
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+        run: python scripts/notify.py report --title "週次リサーチダイジェスト"
+
+      - name: Notify failure (optional)
+        if: failure()
+        continue-on-error: true
+        env:
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+        run: python scripts/notify.py failure --workflow "Weekly Research Digest" --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
       - name: Update health status
         if: always()
         run: python scripts/update_readme_health.py
