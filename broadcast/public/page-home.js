@@ -2,8 +2,8 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { addDays, countUp, h, jstToday, mount, renderEmpty, renderSkeleton, shortDate } from "./util.js";
-import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, loadBoard, loadStatus } from "./store.js";
-import { buildTicker, itemsToChapters, readButton, renderItem } from "./components.js";
+import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, loadBoard, loadStatus, unmuted } from "./store.js";
+import { buildTicker, itemsToChapters, markAllRead, readButton, renderItem } from "./components.js";
 import { navigate } from "./router.js";
 import { programChapters, programFromEpisodes } from "./page-radio.js";
 
@@ -15,7 +15,7 @@ export async function pageHome(view, params) {
   mount(view, renderSkeleton());
   const wanted = params.get("d");
   const dateQuery = wanted && /^\d{4}-\d{2}-\d{2}$/.test(wanted) ? wanted : "latest";
-  const [{ date, episodes }, datesRes, watch, status, extraLanes] = await Promise.all([
+  const [{ date, episodes }, datesRes, watch, status, extraLanes, wwRes] = await Promise.all([
     api(`/api/episodes?kind=daily&date=${dateQuery}`),
     api("/api/episodes/dates?kind=daily"),
     api("/api/watch").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { items: [] })),
@@ -26,7 +26,7 @@ export async function pageHome(view, params) {
         // 1つの追加カテゴリの取得に失敗しても、ページ全体は表示する(認証切れだけは伝える)
         try {
           const res = await api(
-            `/api/articles?category=${e.id}&status=added&collected_since=${addDays(jstToday(), -6)}&order=collected&limit=8`,
+            `/api/articles?category=${e.id}&status=added&collected_since=${addDays(jstToday(), -6)}&order=collected&limit=8${excludeParam()}`,
           );
           return { ...e, total: res.total, items: res.articles.map((a) => ({ ...a, other_categories: [] })) };
         } catch (err) {
@@ -35,6 +35,8 @@ export async function pageHome(view, params) {
         }
       }),
     ),
+    // ウォッチワードごとの直近7日の件数(設定が無ければ空)。取れなくても、ホームは表示する
+    api("/api/watchwords").catch((e) => (e instanceof AuthError ? Promise.reject(e) : { items: [] })),
     loadBoard(),
   ]);
 
@@ -78,7 +80,7 @@ export async function pageHome(view, params) {
 
   for (const c of CATEGORIES) {
     const ep = lanes[c];
-    const items = ep?.data.items ?? [];
+    const items = unmuted(ep?.data.items ?? []); // 設定で非表示にした収集元は出さない
     const lane = h(
       "section",
       { class: "lane", "aria-labelledby": `lane-${c}` },
@@ -92,6 +94,7 @@ export async function pageHome(view, params) {
           "div",
           { class: "lane-foot" },
           readButton("このカテゴリを読み上げ", `${catLabel(c)} の新着(${date})`, () => itemsToChapters(items)),
+          h("button", { class: "btn", type: "button", title: "表示している未読を、すべて既読にします", onclick: () => markAllRead(items.slice(0, HOME_LANE_ITEMS)) }, "表示中を既読に"),
           h("a", { class: "btn", href: `/c/${c}`, "data-link": "" }, `すべて見る(${ep.data.count}件)`),
         ),
       );
@@ -104,7 +107,7 @@ export async function pageHome(view, params) {
     );
   }
 
-  const highlights = all.data.highlights ?? [];
+  const highlights = unmuted(all.data.highlights ?? []);
   const hl = highlights.length
     ? h(
         "section",
@@ -117,7 +120,7 @@ export async function pageHome(view, params) {
   // 速報: 注目 + 各カテゴリの先頭(重複は除く)
   const tickerItems = [];
   const seen = new Set();
-  for (const a of [...highlights, ...CATEGORIES.flatMap((c) => (lanes[c]?.data.items ?? []).slice(0, 3))]) {
+  for (const a of [...highlights, ...CATEGORIES.flatMap((c) => unmuted(lanes[c]?.data.items ?? []).slice(0, 3))]) {
     if (!seen.has(a.url_hash)) {
       seen.add(a.url_hash);
       tickerItems.push(a);
@@ -171,10 +174,45 @@ export async function pageHome(view, params) {
     picker,
     h("div", { class: "lanes" }, ...CATEGORIES.map((c) => laneEls[c])),
     extraLanes.length ? buildExtraLanes(extraLanes) : null,
+    buildWatchwords(wwRes.items ?? []),
     watchBox,
   );
   applyMobile();
   countUp(view); // トップの動きは「カウントアップ」と「速報の流れ」の2種類(フェードインは使わない)
+}
+
+/** ウォッチワードの、直近7日の件数。設定が無いときは、設定への案内だけを小さく出す。 */
+function buildWatchwords(items) {
+  if (!items.length) {
+    return h(
+      "p",
+      { class: "tool-note watchwords-hint" },
+      "気になる語を「ウォッチワード」に登録すると、直近7日の新着の件数がここに出ます。",
+      h("a", { href: "/settings", "data-link": "" }, "設定へ"),
+    );
+  }
+  return h(
+    "section",
+    { class: "panel watchwords", "aria-labelledby": "ww-title" },
+    h("h2", { id: "ww-title" }, "ウォッチワード(直近7日)"),
+    h(
+      "div",
+      { class: "source-chips" },
+      ...items.map((w) =>
+        h(
+          "a",
+          {
+            class: `chip${w.count ? " hit" : ""}`,
+            href: `/search?q=${encodeURIComponent(w.word)}`,
+            "data-link": "",
+            title: w.latest.map((l) => l.title).join("\n") || "直近7日の新着はありません",
+          },
+          w.word,
+          h("span", { class: "n" }, String(w.count)),
+        ),
+      ),
+    ),
+  );
 }
 
 /** 追加カテゴリのレーン(直近7日に収集した記事)。基本の3レーンの下に、別の見出しで出す。 */

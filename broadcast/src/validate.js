@@ -299,6 +299,17 @@ export function buildArticleQuery(searchParams, categories = CATEGORIES) {
     params.push(since);
   }
 
+  // exclude_platforms: 非表示にする収集元(カンマ区切り。最大40)。設定の「非表示の収集元」で使う
+  const exclude = searchParams.get("exclude_platforms");
+  if (exclude !== null) {
+    const names = exclude.split(",").map((x) => x.trim()).filter(Boolean).slice(0, 40);
+    if (names.some((n) => n.length > 40)) return { ok: false, error: "bad_exclude_platforms" };
+    if (names.length) {
+      clauses.push(`platform NOT IN (${names.map(() => "?").join(",")})`);
+      params.push(...names);
+    }
+  }
+
   // collected_since: 収集した日(JST ではなく UTC の日付)がその日以降。公開日が古い論文も「最近集めた」で拾える
   const collectedSince = searchParams.get("collected_since");
   if (collectedSince !== null) {
@@ -433,10 +444,73 @@ export function validateWatchItem(w) {
   return { ok: true, value: { watch: w.watch, title: w.title, url: w.url, detected_at: w.detected_at } };
 }
 
+// ------------------------------------------------------------------ 設定(ウォッチワード・関連プロジェクト・非表示の収集元)
+
+const isShort = (v, max) => typeof v === "string" && v.trim().length >= 1 && v.trim().length <= max;
+
+/**
+ * 設定1件の検証。値は、サイトを使う人が自分で決めるもの(ウォッチワード等)。
+ * @returns {{ok: true, value: any} | {ok: false, error: string}}
+ */
+export function validatePref(key, value) {
+  const uniq = (arr) => [...new Set(arr.map((v) => v.trim()))];
+  if (key === "watchwords") {
+    if (!Array.isArray(value) || value.length > 10) return { ok: false, error: "bad_watchwords" };
+    if (!value.every((v) => isShort(v, 40))) return { ok: false, error: "bad_watchword" };
+    return { ok: true, value: uniq(value) };
+  }
+  if (key === "muted_sources") {
+    if (!Array.isArray(value) || value.length > 40) return { ok: false, error: "bad_muted_sources" };
+    if (!value.every((v) => isShort(v, 40))) return { ok: false, error: "bad_muted_source" };
+    return { ok: true, value: uniq(value) };
+  }
+  if (key === "projects") {
+    if (!Array.isArray(value) || value.length > 12) return { ok: false, error: "bad_projects" };
+    const out = [];
+    for (const p of value) {
+      if (p === null || typeof p !== "object" || !isShort(p.name, 40)) return { ok: false, error: "bad_project" };
+      if (!Array.isArray(p.keywords) || p.keywords.length > 20 || !p.keywords.every((k) => isShort(k, 40)))
+        return { ok: false, error: "bad_project_keywords" };
+      out.push({ name: p.name.trim(), keywords: uniq(p.keywords) });
+    }
+    return { ok: true, value: out };
+  }
+  return { ok: false, error: "unknown_pref" };
+}
+
+export const PREF_KEYS = ["watchwords", "muted_sources", "projects"];
+
+// ------------------------------------------------------------------ 検索
+
+/**
+ * 検索語を、検索の方式と束縛値にする。語は空白で区切り、すべてを含む記事(AND)。
+ * 3文字以上の語だけなら全文検索(FTS5 trigram。部分一致)、短い語を含むときは LIKE。
+ * @returns {{ok: false, error: string} | {ok: true, terms: string[], useFts: boolean, match: string}}
+ */
+export function parseSearch(q) {
+  const text = String(q ?? "").trim();
+  if (text.length < 1 || text.length > 60) return { ok: false, error: "bad_query" };
+  const terms = text.split(/\s+/).filter(Boolean).slice(0, 5);
+  const useFts = terms.every((t) => [...t].length >= 3);
+  // FTS5 の文字列は二重引用符で囲み、中の " は "" にする(演算子として解釈させない)
+  const match = terms.map((t) => `"${t.replace(/"/g, '""')}"`).join(" ");
+  return { ok: true, terms, useFts, match };
+}
+
+/** LIKE のワイルドカードを無効にする(ESCAPE '\\' と組み合わせる)。 */
+export function escapeLike(s) {
+  return String(s).replace(/[\\%_]/g, (c) => "\\" + c);
+}
+
+// ------------------------------------------------------------------ エクスポート(バックアップ)
+
+export const EXPORT_TABLES = ["articles", "episodes", "reports", "board", "watch", "prefs", "meta"];
+
 // ------------------------------------------------------------------ ボード
 
 // 未読 は「行が無い」状態。reading=読む / try=試す / hold=保留
-export const BOARD_STATES = ["reading", "try", "hold"];
+// read = 既読(読み終えた。一覧では薄く表示し、「既読を隠す」で隠せる)
+export const BOARD_STATES = ["reading", "try", "hold", "read"];
 
 /** PUT /api/board/{url_hash} の本文。state が "unread" なら削除(未読に戻す)。 */
 export function validateBoardInput(body) {

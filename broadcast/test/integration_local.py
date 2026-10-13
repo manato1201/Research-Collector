@@ -11,7 +11,7 @@ ResearchBroadcast Worker の結合テスト(ローカル)。実際の scripts/po
 トークンは broadcast/.dev.vars の INGEST_TOKEN(または環境変数 BROADCAST_INGEST_TOKEN)を使う。
 注意: ローカルのD1に記事を書き込む(本番には触れない)。
 """
-import json, os, re, sys, time, urllib.error, urllib.request
+import json, os, re, sys, time, urllib.error, urllib.parse, urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
@@ -341,6 +341,73 @@ if cats.get("extra"):
 else:
     print("SKIP extra category checks (EXTRA_CATEGORIES not configured)")
 
+# --- 検索(FTS5 trigram / LIKE)・設定・ウォッチワード・まとめて既読・書き出し
+srch = {"url_hash": "5ea0000000000001", "url": "https://example.com/search-1", "title": "Zebracorn レンダリング最適化の検索テスト",
+        "source_type": "unity", "platform": "search_test_src", "categories": ["graphics_research"], "status": "added",
+        "collected_at": now, "published": "2026-10-10", "summary": "検索用の要約です。"}
+s, r = call("POST", "/api/ingest", {"schema": 1, "articles": [srch]})
+check("search fixture ingested", s == 200 and r["accepted"] == 1, (s, r))
+s, r = call("GET", "/api/search?q=Zebracorn")
+check("full-text search finds a word (3+ chars)", s == 200 and r["mode"] == "fts" and [a["url_hash"] for a in r["articles"]] == ["5ea0000000000001"], (s, r))
+s, r = call("GET", "/api/search?q=" + urllib.parse.quote("レンダリング"))
+check("full-text search finds Japanese by substring", s == 200 and any(a["url_hash"] == "5ea0000000000001" for a in r["articles"]), (s, str(r)[:200]))
+s, r = call("GET", "/api/search?q=" + urllib.parse.quote("検索"))
+check("short (2 char) queries fall back to LIKE", s == 200 and r["mode"] == "like" and any(a["url_hash"] == "5ea0000000000001" for a in r["articles"]), (s, str(r)[:200]))
+s, r = call("GET", "/api/search?q=" + urllib.parse.quote("Zebracorn 存在しない語"))
+check("multiple words are ANDed", s == 200 and r["articles"] == [], (s, r))
+check("search handles quotes and operators as plain text", call("GET", "/api/search?q=" + urllib.parse.quote('" OR 1=1 --'))[0] == 200)
+check("empty query -> 400", call("GET", "/api/search?q=")[0] == 400)
+check("search requires auth", call("GET", "/api/search?q=abc", token=None)[0] == 401)
+# 更新(upsert)しても索引が壊れず、1件のまま
+call("POST", "/api/ingest", {"schema": 1, "articles": [{**srch, "title": "Zebracorn レンダリング最適化の検索テスト(更新)"}]})
+s, r = call("GET", "/api/search?q=Zebracorn")
+check("an updated article stays searchable exactly once", len(r["articles"]) == 1 and "更新" in r["articles"][0]["title"], r)
+
+s, r = call("PUT", "/api/prefs/watchwords", {"value": ["Zebracorn", "存在しない語です"]})
+check("watchwords saved", s == 200 and r["value"] == ["Zebracorn", "存在しない語です"], (s, r))
+s, r = call("GET", "/api/watchwords")
+by_word = {i["word"]: i for i in r.get("items", [])}
+check("watchword summary has the count and latest titles",
+      s == 200 and by_word["Zebracorn"]["count"] == 1 and by_word["Zebracorn"]["latest"][0]["url_hash"] == "5ea0000000000001"
+      and by_word["存在しない語です"]["count"] == 0, (s, r))
+check("prefs are readable", call("GET", "/api/prefs")[1]["watchwords"] == ["Zebracorn", "存在しない語です"])
+check("bad pref -> 400", call("PUT", "/api/prefs/watchwords", {"value": "x"})[0] == 400)
+check("unknown pref key -> 404", call("PUT", "/api/prefs/whatever", {"value": []})[0] == 404)
+call("PUT", "/api/prefs/watchwords", {"value": []})
+s, r = call("PUT", "/api/prefs/projects", {"value": [{"name": "卒論", "keywords": ["RAG", "MCP"]}]})
+check("projects saved", s == 200 and r["value"][0]["name"] == "卒論", (s, r))
+call("PUT", "/api/prefs/projects", {"value": []})
+
+s, r = call("GET", "/api/sources")
+check("sources lists platforms with counts", s == 200 and any(x["platform"] == "search_test_src" and x["n"] == 1 for x in r["sources"]), (s, str(r)[:200]))
+s, r = call("GET", "/api/articles?category=graphics_research&status=added&limit=200&exclude_platforms=search_test_src")
+check("excluded platforms are filtered out of article lists", s == 200 and not any(a["platform"] == "search_test_src" for a in r["articles"]), s)
+
+# まとめて既読: 読む/試す/保留 に入れた記事は上書きしない
+H1, H2 = "5ea0000000000001", "aaaaaaaaaaaaaaaa"
+call("PUT", f"/api/board/{H2}", {"state": "try"})
+s, r = call("POST", "/api/board/bulk", {"hashes": [H1, H2], "state": "read"})
+check("bulk read accepted", s == 200 and r["count"] == 2, (s, r))
+items = {i["url_hash"]: i["state"] for i in call("GET", "/api/board")[1]["items"]}
+check("bulk read marks new rows and keeps 'try'", items.get(H1) == "read" and items.get(H2) == "try", items)
+s, r = call("POST", "/api/board/bulk", {"hashes": [H1, H2], "state": "unread"})
+items = {i["url_hash"]: i["state"] for i in call("GET", "/api/board")[1]["items"]}
+check("bulk unread clears rows", s == 200 and H1 not in items and H2 not in items, items)
+check("bulk rejects bad hashes and oversize requests",
+      call("POST", "/api/board/bulk", {"hashes": ["nope"], "state": "read"})[0] == 400
+      and call("POST", "/api/board/bulk", {"hashes": [f"{i:016x}" for i in range(201)], "state": "read"})[0] == 400)
+check("bulk requires auth", call("POST", "/api/board/bulk", {"hashes": [H1], "state": "read"}, token=None)[0] == 401)
+
+s, r = call("GET", "/api/export?table=articles&offset=0&limit=5")
+check("export returns a page with a next offset", s == 200 and r["count"] == 5 and r["next"] == 5 and "url_hash" in r["rows"][0], (s, str(r)[:150]))
+tot, off, pages = 0, 0, 0
+while off is not None and pages < 200:
+    r = call("GET", f"/api/export?table=articles&offset={off}&limit=200")[1]
+    tot += r["count"]; off = r["next"]; pages += 1
+check("export pages through every article", tot == call("GET", "/api/status")[1]["articles"]["total"] + call("GET", "/api/articles?status=merged&limit=1")[1]["total"] + call("GET", "/api/articles?status=failed&limit=1")[1]["total"], tot)
+check("export rejects unknown tables", call("GET", "/api/export?table=sqlite_master")[0] == 400)
+check("export is bearer-only", call("GET", "/api/export?table=articles", token=None)[0] == 401)
+
 # --- ログイン(人)・Cookie・CSRF
 if VIEW_PASSWORD:
     s, r, _ = call_raw("GET", "/api/session")
@@ -358,6 +425,12 @@ if VIEW_PASSWORD:
     check("session: authenticated via cookie", r.get("authenticated") is True and r.get("via") == "session", r)
     check("cookie can read /api/articles", call_raw("GET", "/api/articles?limit=1", headers=jar)[0] == 200)
     check("cookie cannot ingest (bearer only)", call_raw("POST", "/api/ingest", {"schema": 1, "articles": []}, headers=jar)[0] == 401)
+    check("cookie cannot export (bearer only)", call_raw("GET", "/api/export?table=articles", headers=jar)[0] == 401)
+    s, r, _ = call_raw("PUT", "/api/prefs/watchwords", {"value": ["x1y2z3"]}, headers={**jar, **origin})
+    check("cookie + same origin can save prefs", s == 200, (s, r))
+    s, r, _ = call_raw("PUT", "/api/prefs/watchwords", {"value": ["x1y2z3"]}, headers={**jar, "origin": "https://evil.example"})
+    check("cookie + foreign origin cannot save prefs (CSRF)", s == 403, (s, r))
+    call("PUT", "/api/prefs/watchwords", {"value": []})
     s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, **origin})
     check("cookie + same origin can write board", s == 200, (s, r))
     s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, "origin": "https://evil.example"})

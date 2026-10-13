@@ -41,6 +41,8 @@
 | `/` | 今日の放送。速報ティッカー(停止できる)・注目・カテゴリ別の3レーン・日付の切り替え・全体/カテゴリ別の読み上げ・最新レポートへのリンク・配布サイトの新着(ウォッチ)。複数カテゴリの記事は「ほかのカテゴリにも」バッジ |
 | `/c/<category>` | カテゴリ。今日のヘッドライン・期間(今日 / 今週 / 30日 / 先月。上に固定)・収集元のチップ・要確認のみ・ページの読み上げ |
 | `/radio` | ラジオ。その日の放送を番組(オープニング → 注目 → カテゴリ別のコーナー → エンディング)として聴く。ON AIR・等化器・番組表(コーナーの開始時刻の目安)・スリープタイマー・効果音(ジングル)・原稿の表示 |
+| `/search?q=` | 検索。結果から、ウォッチワードに保存できる |
+| `/settings` | ウォッチワード・関連プロジェクト(キーワードに当てはまる記事に「# 名前」のバッジ)・非表示の収集元・ショートカットの一覧 |
 | `/board` | 読む / 試す / 保留。カテゴリで絞り込み |
 | `/weekly[/<YYYY-Www>]` | 週次特集。日別の推移(線が引かれる SVG)・カテゴリ別の件数・章ごとの記事・目次・特集の読み上げ |
 | `/reports` | 週次レポートの一覧(NotebookLM が、その週に集めた記事をカテゴリごとにまとめたダイジェスト) |
@@ -48,7 +50,7 @@
 | `/status` | 取り込みの状態・件数・収集元ごとの取得件数・失敗した収集元・統合された記事・NotebookLM への追加に失敗した記事。取り込みが止まっているとバッジを出す |
 | `/login` | パスワード入力 |
 
-**ファイルの構成**(`public/`): `app.js`(入口・配線のみ)/ `router.js`(ルーター・ステータスバー)/ `store.js`(カテゴリ・API・状態)/ `util.js`(DOM・日付・動きの道具)/ `components.js`(記事の行・ドロワー・読み上げボタン・目次・速報)/ `page-*.js`(各ページ)/ `player.js`(再生バー)/ `radio-script.js`(ラジオ原稿の生成。DOM に依存せず、`npm test` で試験する)/ `sfx.js`(ジングル)/ `markdown.js`(レポートの描画)。
+**ファイルの構成**(`public/`): `app.js`(入口・配線のみ)/ `router.js`(ルーター・ステータスバー)/ `store.js`(カテゴリ・API・状態)/ `util.js`(DOM・日付・動きの道具)/ `components.js`(記事の行・ドロワー・読み上げボタン・目次・速報)/ `page-*.js`(各ページ)/ `player.js`(再生バー)/ `radio-script.js`(ラジオ原稿の生成・読み上げの分割。DOM に依存せず、`npm test` で試験する)/ `sfx.js`(ジングル)/ `markdown.js`(レポートの描画)/ `keys.js`(キーボード操作)/ `sw.js` + `manifest.webmanifest`(PWA)。`test/modules.test.js` が、import と export の整合・循環参照を静的に確かめる(1つの名前の取りこぼしで、サイト全体が動かなくなるため)。
 
 記事を開くドロワーは、Esc で閉じ、フォーカスを内側に閉じ込め、閉じると元の位置へ戻す。`prefers-reduced-motion` では動きを止める。
 
@@ -132,6 +134,12 @@ Content-Type: application/json
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
 | `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
 | `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
+| `GET /api/search?q=` | 同上 | 記事の検索。空白区切りはAND。3文字以上の語は全文検索(FTS5 trigram。日本語も部分一致)、短い語は LIKE |
+| `GET /api/watchwords` | 同上 | ウォッチワードごとの、直近7日(収集した日)の件数と新着3件 |
+| `GET /api/prefs` / `PUT /api/prefs/{key}` | 同上(書き込みは Cookie のとき Origin も検査) | 設定。`watchwords`(10個まで)/ `projects`(関連プロジェクト。12個まで)/ `muted_sources`(非表示の収集元) |
+| `GET /api/sources` | 同上 | 収集元ごとの件数(非表示の設定に使う) |
+| `POST /api/board/bulk` | 同上 | `{"hashes":[…200件まで],"state":"read"}`。まとめて既読。**「読む / 試す / 保留」の記事は上書きしない** |
+| `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブルを1回200行までページで返す(`scripts/backup_d1.py` が使う) |
 | `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
 | `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する |
@@ -161,11 +169,24 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。51項目。ラジオ原稿・読み上げの分割を含む)
-- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(88項目。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
-- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(106項目。ラジオ・追加カテゴリ・「null」文字の混入なし・ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。62項目。ラジオ原稿・読み上げの分割・設定・検索・モジュールの整合を含む)
+- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(117項目。検索・設定・まとめて既読・書き出しを含む。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
+- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(128項目。検索・既読・キーボード・設定・PWA・オフラインを含む。ラジオ・追加カテゴリ・「null」文字の混入なし・ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
 ---
+
+## 使いやすさ・運用の機能
+
+| 機能 | 内容 |
+|---|---|
+| 通知 | `scripts/notify.py`。放送が出たとき(新着の件数と上位3本)・週次レポートが出たとき・収集が失敗したときに、**ntfy.sh か Slack** へ送る。Secrets の `NTFY_TOPIC`(推測されにくい名前にする。トピック名が合言葉になる)または `SLACK_WEBHOOK_URL` を登録すると有効になり、未設定なら何もしない。送るのは題名・件数・サイトのリンクだけ |
+| 既読・キーボード | ボードの状態に「既読」を追加。記事のリンクを開くと、何も付いていない記事は既読になる。「既読を隠す」(ヘッダ / `u`)で一覧から隠せる。`j` `k` `o` `x` `X` `/` `?` `g→…` |
+| 検索・ウォッチワード | ヘッダの検索ボックス(`/`)。保存した語は、ホームに直近7日の件数が出る |
+| 関連プロジェクト | 設定したキーワードが題名・要約に含まれる記事に、「# プロジェクト名」のバッジ |
+| 非表示の収集元 | 設定でチェックした収集元は、ホーム・カテゴリページに出さない(件数の表示は変わらない) |
+| 週次のキーワード | 週次特集に、今週よく出た語と、先週との差(新出・増えた語)。`nbklm/episodes.py` が、題名の英字・カタカナ語から規則ベースで作る |
+| PWA | ホーム画面に追加できる。つながっているときは常に最新で、切れているときだけ、最後に見た内容を出す(ボード等の書き込みはオフラインでは不可)。ログアウトで、端末に保存した応答を消す |
+| バックアップ | `scripts/backup_d1.py`。`/api/export` をたどって、`backup/` に gzip の JSON を作る(最新8本を残す)。**公開リポジトリには置かない**(ボードのメモ等を含むため。成果物にも載せない)。ローカルの日次タスクが、週1回呼ぶ。復元の第一の手段は D1 の Time Travel(`wrangler d1 time-travel restore`) |
 
 ## 追加カテゴリ(任意)
 

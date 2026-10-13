@@ -2,8 +2,8 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { addDays, crumbs, fadeIn, h, jstToday, mount, pageNotFound, renderEmpty, renderSkeleton, weekStart, ymd } from "./util.js";
-import { AuthError, EXTRA, allCategoryIds, api, catLabel, dot, loadBoard } from "./store.js";
-import { itemsToChapters, readButton, renderItem, sourceChips } from "./components.js";
+import { AuthError, EXTRA, allCategoryIds, api, catLabel, dot, excludeParam, loadBoard } from "./store.js";
+import { itemsToChapters, markAllRead, readButton, renderItem, sourceChips } from "./components.js";
 import { navigate } from "./router.js";
 
 // ------------------------------------------------------------------ ページ: カテゴリ
@@ -40,7 +40,7 @@ export async function pageCategory(view, cat, params) {
   // 追加カテゴリは論文が中心で、公開日が古いものも「最近集めた」として見たいので、収集した日で絞る
   const byCollected = EXTRA.some((e) => e.id === cat);
   const [fromKey, toKey] = byCollected ? ["collected_since", "collected_until"] : ["since", "until"];
-  const q = `category=${cat}&status=added&${fromKey}=${since}${until ? `&${toKey}=${until}` : ""}${byCollected ? "&order=collected" : ""}&limit=200`;
+  const q = `category=${cat}&status=added&${fromKey}=${since}${until ? `&${toKey}=${until}` : ""}${byCollected ? "&order=collected" : ""}${excludeParam()}&limit=200`;
   const [res, headlineRes] = await Promise.all([
     api(`/api/articles?${q}`),
     api(`/api/episodes?kind=daily&date=latest&category=${cat}`).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),
@@ -74,6 +74,11 @@ export async function pageCategory(view, cat, params) {
   );
   const periodLabel = PERIODS.find(([k]) => k === period)[1];
   const readThis = readButton("このページを読み上げ", `${catLabel(cat)}(${periodLabel})`, () => itemsToChapters(shown, 20));
+  const markRead = h(
+    "button",
+    { class: "btn", type: "button", title: "表示中の未読を、すべて既読にします(最大200件)", onclick: () => markAllRead(shown) },
+    "表示中をすべて既読に",
+  );
 
   const list = shown.length
     ? h("ul", { class: "list" }, ...shown.map((a) => renderItem(a)))
@@ -88,7 +93,7 @@ export async function pageCategory(view, cat, params) {
     h(
       "div",
       { class: "sticky-controls" },
-      h("div", { class: "row-controls" }, seg, reviewChip, readThis),
+      h("div", { class: "row-controls" }, seg, reviewChip, readThis, markRead),
       sourceChips(sources, source, (key) => go({ s: key })),
     ),
     list,

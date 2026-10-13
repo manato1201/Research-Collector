@@ -2,7 +2,7 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { h, mount, pageNotFound, relativeTime, renderEmpty } from "./util.js";
-import { AuthError, STALE_HOURS, cleanup, loadCategories, loadStatus, state } from "./store.js";
+import { AuthError, STALE_HOURS, cleanup, loadCategories, loadPrefs, loadStatus, state } from "./store.js";
 
 // ------------------------------------------------------------------ ステータスバー(ヘッダ)
 
@@ -79,7 +79,7 @@ export async function render() {
 
   try {
     if (url.pathname !== "/login") {
-      await loadCategories().catch((e) => (e instanceof AuthError ? Promise.reject(e) : undefined));
+      await Promise.all([loadCategories(), loadPrefs()]).catch((e) => (e instanceof AuthError ? Promise.reject(e) : undefined));
     }
     if (!route) pageNotFound(view);
     else await route.r.run(view, route.m, url.searchParams);

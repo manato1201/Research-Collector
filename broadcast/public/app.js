@@ -19,6 +19,10 @@ import { pageHome } from "./page-home.js";
 import { pageCategory } from "./page-category.js";
 import { pageBoard } from "./page-board.js";
 import { pageRadio } from "./page-radio.js";
+import { pageSearch } from "./page-search.js";
+import { pageSettings } from "./page-settings.js";
+import { initKeys } from "./keys.js";
+import { getHideRead, setHideRead } from "./store.js";
 import { pageWeekly } from "./page-weekly.js";
 import { pageReport, pageReports } from "./page-reports.js";
 import { pageStatus } from "./page-status.js";
@@ -28,6 +32,8 @@ import { pageLogin } from "./page-login.js";
 registerRoutes([
   { re: /^\/$/, nav: "home", title: "今日の放送", run: (v, _m, q) => pageHome(v, q) },
   { re: /^\/c\/([a-z_]+)$/, nav: "home", title: "カテゴリ", run: (v, m, q) => pageCategory(v, m[1], q) },
+  { re: /^\/search$/, nav: "home", title: "検索", run: (v, _m, q) => pageSearch(v, q) },
+  { re: /^\/settings$/, nav: "settings", title: "設定", run: (v) => pageSettings(v) },
   { re: /^\/radio$/, nav: "radio", title: "ラジオ", run: (v, _m, q) => pageRadio(v, q) },
   { re: /^\/board$/, nav: "board", title: "ボード", run: (v, _m, q) => pageBoard(v, q) },
   { re: /^\/weekly(?:\/(\d{4}-W\d{2}))?$/, nav: "weekly", title: "週次特集", run: (v, m) => pageWeekly(v, m[1] ?? null) },
@@ -58,6 +64,41 @@ window.addEventListener("popstate", () => {
 });
 
 player.initPlayerUI();
+initKeys();
+
+// ホーム画面に追加・オフラインで直近の内容を見る(sw.js)。登録に失敗しても、サイトは普通に動く
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+const setOffline = () => {
+  document.body.dataset.offline = navigator.onLine ? "0" : "1";
+};
+window.addEventListener("online", setOffline);
+window.addEventListener("offline", setOffline);
+setOffline();
+
+// 検索ボックス(ヘッダ)。Enter で検索ページへ
+document.getElementById("search-form").addEventListener("submit", (ev) => {
+  ev.preventDefault();
+  const input = document.getElementById("search-input");
+  const q = input.value.trim();
+  if (q) {
+    navigate(`/search?q=${encodeURIComponent(q)}`);
+    input.blur();
+  }
+});
+
+// 「既読を隠す」(この端末の設定。localStorage)
+const hideBtn = document.getElementById("hide-read-btn");
+setHideRead(getHideRead());
+hideBtn.setAttribute("aria-pressed", String(getHideRead()));
+hideBtn.addEventListener("click", () => {
+  const next = !getHideRead();
+  setHideRead(next);
+  hideBtn.setAttribute("aria-pressed", String(next));
+});
 
 // 固定ヘッダの高さを CSS 変数にする(スティッキーな要素の位置に使う。CSSOM 経由なので CSP に当たらない)
 const topEl = document.querySelector(".top");
@@ -112,6 +153,8 @@ document.getElementById("logout-btn").addEventListener("click", async () => {
   }
   resetSessionState();
   player.stop();
+  // 端末に保存した API の応答(記事・ボード等)も消す
+  navigator.serviceWorker?.controller?.postMessage({ type: "clear" });
   updateAuthUi();
   navigate("/login");
 });
