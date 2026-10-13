@@ -124,6 +124,8 @@ Secretへ自動的に書き戻す。これには **Secrets書き込み権限を�
 | 収集結果を見る | `results.html` をブラウザで開く。日次・週次の実行のたびに自動更新される(GitHub Pages等で公開するかは自分で決める) |
 | 分類のキーワードを調整する | `nbklm/classifier.py`。精度は `agreement_report()` で自分のデータから測れる |
 | 収集した記事を ResearchBroadcast(`broadcast/`)へ送る | GitHub の Secrets に `BROADCAST_INGEST_URL`(`https://…/api/ingest`)と `BROADCAST_INGEST_TOKEN` を登録する。**登録するまでは、送信ステップは何もしない**(日次の記事・episode・ウォッチと、週次のレポートの両方が対象)。受け口のデプロイ手順(CLI だけで行える。`INGEST_TOKEN` と、サイトのログイン用 `VIEW_PASSWORD` の2つを `wrangler secret put` で登録する)は `broadcast/README.md`。Cloudflare Access のサービス認証を使う場合は `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` も |
+| 放送・失敗・週次レポートをスマホへ通知する | GitHub の Secrets に `NTFY_TOPIC`(推測されにくいトピック名。スマホの ntfy アプリで同じ名前を購読する)、または `SLACK_WEBHOOK_URL` を登録する。**登録するまでは何もしない**。送るのは題名・件数・サイトのリンクだけ |
+| ResearchBroadcast のデータをバックアップする | `python scripts/backup_d1.py`(`backup/` に保存。公開リポジトリには置かない)。ローカルの追加収集タスクが、週1回呼ぶ |
 | テストを実行する | `python -m unittest discover tests`(ネットワーク不要) / `cd broadcast && npm test` |
 
 `articles_log.json` / `watch_state.json` / `results.html` はGitHub Actionsが自動でコミットする(初回の実行後に現れる)。
