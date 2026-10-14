@@ -20,6 +20,7 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Optional
 
+from ._text import make_abstract
 from .retry import retry
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,7 @@ def parse_arxiv_xml(xml_text: str) -> list[dict]:
             papers.append({
                 "url": url, "title": title,
                 "authors": author_str, "published_at": published_at,
+                "summary": make_abstract(extract("summary")),
             })
     return papers
 
@@ -192,6 +194,7 @@ def arxiv_search(
                 "published_at": paper["published_at"],
                 "url_hash":     h,
                 "authors":      paper.get("authors", ""),
+                "summary":      paper.get("summary"),
             })
 
         time.sleep(3)  # arXiv APIのレート制限対策
@@ -267,6 +270,7 @@ def arxiv_search_backfill(
                     "published_at": paper["published_at"],
                     "url_hash":     h,
                     "authors":      paper.get("authors", ""),
+                "summary":      paper.get("summary"),
                 })
 
             fetched += len(papers)
@@ -325,6 +329,7 @@ def _s2_paper_to_article(
         "published_at": published_at,
         "url_hash":     url_hash(paper_url),
         "authors":      author_str,
+        "summary":      make_abstract(paper.get("abstract")),
     }
 
 
@@ -346,7 +351,7 @@ def semantic_scholar_search(
         params = urllib.parse.urlencode({
             "query":  query,
             "limit":  max_per_query,
-            "fields": "title,authors,year,externalIds,openAccessPdf,url",
+            "fields": "title,authors,year,externalIds,openAccessPdf,url,abstract",
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"
         try:
@@ -389,7 +394,7 @@ def semantic_scholar_search_backfill(
         params = urllib.parse.urlencode({
             "query":                 query,
             "limit":                 max_per_query,
-            "fields":                "title,authors,year,externalIds,openAccessPdf,url,publicationDate",
+            "fields":                "title,authors,year,externalIds,openAccessPdf,url,publicationDate,abstract",
             "publicationDateOrYear": date_range,
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"

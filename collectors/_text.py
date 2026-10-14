@@ -14,6 +14,7 @@ import re
 from typing import Optional
 
 SUMMARY_MAX = 140  # 要約として保存する最大文字数(これを超えたら「…」で切る)
+ABSTRACT_MAX = 300  # 論文のアブストラクトの抜粋(解説・ラジオの根拠にする。全文は載せない)
 
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
@@ -51,3 +52,11 @@ def make_summary(entry, max_len: int = SUMMARY_MAX) -> Optional[str]:
     if len(text) > max_len:
         text = text[: max_len - 1].rstrip() + "…"
     return text
+
+
+def make_abstract(text: Optional[str], max_len: int = ABSTRACT_MAX) -> Optional[str]:
+    """論文のアブストラクトを、max_len 字までに切る(HTML・改行を整える)。無ければ None。"""
+    t = strip_html(text)
+    if not t:
+        return None
+    return t if len(t) <= max_len else t[: max_len - 1].rstrip() + "…"

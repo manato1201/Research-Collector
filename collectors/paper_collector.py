@@ -16,6 +16,7 @@ import json
 from datetime import datetime, timezone
 
 from ._academic_api import S2_GIVE_UP_AFTER, S2RateLimited, fetch_json_s2
+from ._text import make_abstract
 from .retry import record_failure, retry
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ def _parse_arxiv_xml(xml_text: str) -> list[dict]:
                 "url":          url,
                 "title":        title,
                 "authors":      author_str,
+                "summary":      make_abstract(extract("summary")),
                 "published_at": published_at,
             })
 
@@ -178,6 +180,7 @@ def collect_arxiv(max_per_query: int = 5) -> list[dict]:
                 "published_at": paper["published_at"],
                 "url_hash":     h,
                 "authors":      paper.get("authors", ""),
+                "summary":      paper.get("summary"),
             })
 
         # arXiv APIのレート制限対策（3秒待機）
@@ -254,6 +257,7 @@ def collect_arxiv_backfill(
                     "published_at": paper["published_at"],
                     "url_hash":     h,
                     "authors":      paper.get("authors", ""),
+                "summary":      paper.get("summary"),
                 })
 
             fetched_for_query += len(papers)
@@ -294,7 +298,7 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
         params = urllib.parse.urlencode({
             "query":  query,
             "limit":  max_per_query,
-            "fields": "title,authors,year,externalIds,openAccessPdf,url",
+            "fields": "title,authors,year,externalIds,openAccessPdf,url,abstract",
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"
 
@@ -357,6 +361,7 @@ def collect_semantic_scholar(max_per_query: int = 5) -> list[dict]:
                 "published_at": published_at,
                 "url_hash":     h,
                 "authors":      author_str,
+                "summary":      make_abstract(paper.get("abstract")),
             })
 
         # レート制限対策（1秒待機）
@@ -384,7 +389,7 @@ def collect_semantic_scholar_backfill(
         params = urllib.parse.urlencode({
             "query":                 query,
             "limit":                 max_per_query,
-            "fields":                "title,authors,year,externalIds,openAccessPdf,url,publicationDate",
+            "fields":                "title,authors,year,externalIds,openAccessPdf,url,publicationDate,abstract",
             "publicationDateOrYear": date_range,
         })
         url = f"{SEMANTIC_SCHOLAR_API}?{params}"
@@ -451,6 +456,7 @@ def collect_semantic_scholar_backfill(
                 "published_at": published_at,
                 "url_hash":     h,
                 "authors":      author_str,
+                "summary":      make_abstract(paper.get("abstract")),
             })
 
         time.sleep(1)

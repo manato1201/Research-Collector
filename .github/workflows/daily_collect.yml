@@ -75,6 +75,16 @@ jobs:
           CF_ACCESS_CLIENT_SECRET: ${{ secrets.CF_ACCESS_CLIENT_SECRET }}
         run: python scripts/post_ingest.py
 
+      # 新着記事の「解説」(これは何か・何ができるか・どう応用できるか)を、Worker の Workers AI(無料枠)で作らせる。
+      # 任意の工程: BROADCAST_INGEST_URL / TOKEN が無ければ何もしない。失敗しても収集には影響しない。
+      - name: Generate article insights (optional)
+        if: success()
+        continue-on-error: true
+        env:
+          BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
+          BROADCAST_INGEST_TOKEN: ${{ secrets.BROADCAST_INGEST_TOKEN }}
+        run: python scripts/enrich.py --rounds 3
+
       # 放送が出たこと(新着の要約)をスマホへ通知する。任意の工程: NTFY_TOPIC / SLACK_WEBHOOK_URL が無ければ何もしない。
       - name: Notify new articles (optional)
         if: success()
