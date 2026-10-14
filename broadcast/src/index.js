@@ -12,6 +12,8 @@
 //   PUT  /api/board/{url_hash} | DELETE /api/board/{url_hash}
 //   GET  /api/reports      週次レポート(ダイジェスト)の一覧 / GET /api/reports/{id} 本文
 //   GET  /api/watch        配布サイトの新着(通知のみ)
+//   POST /api/enrich       解説(これは何か・何ができるか・どう応用できるか)を、Workers AI で作る(Bearer のみ。1回 最大8件)
+//   GET  /api/insights?hashes=…   記事の解説(AI が書いたもの。無ければ、出典の種類ごとの定型の解説)
 //   GET  /api/search?q=     記事の検索(3文字以上は全文検索 FTS5 trigram、短い語は LIKE)
 //   GET  /api/watchwords    ウォッチワードごとの直近7日の件数と新着
 //   GET  /api/prefs / PUT /api/prefs/{key}   設定(ウォッチワード・関連プロジェクト・非表示の収集元)
@@ -22,6 +24,7 @@
 //   GET  /api/health        生存確認(認証なし。データは返さない)
 // それ以外は静的アセット(public/。サイトの本体)。サイト自体にデータは入っていない。
 
+import { buildMessages, extractText, fallbackInsight, MIN_SUMMARY_CHARS, parseInsight } from "./insights.js";
 import {
   parseCookie,
   SESSION_COOKIE,
@@ -103,6 +106,14 @@ async function route(request, env, url) {
   }
 
   // ---- 読み出し・ボード(Bearer か ログイン済みの Cookie)
+  // 解説の生成は、機械(Bearer)だけ。Workers AI の無料枠(1日 10,000 Neurons)を、誰かに使われないように
+  if (pathname === "/api/enrich") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    const denied = await requireBearer(request, env);
+    if (denied) return denied;
+    return handleEnrich(env, url);
+  }
+
   if (pathname === "/api/board/bulk") {
     if (method !== "POST") return methodNotAllowed("POST");
     return withAuth(request, env, url, true, () => handleBoardBulk(request, env));
@@ -149,6 +160,7 @@ async function route(request, env, url) {
     "/api/articles": () => handleArticles(url, env),
     "/api/categories": () => handleCategories(env),
     "/api/search": () => handleSearch(url, env),
+    "/api/insights": () => handleInsights(url, env),
     "/api/watchwords": () => handleWatchwords(env),
     "/api/prefs": () => handlePrefsRead(env),
     "/api/sources": () => handleSources(env),
@@ -592,6 +604,89 @@ async function handleWatch(env) {
     "SELECT watch, title, url, detected_at FROM watch ORDER BY detected_at DESC LIMIT 50",
   ).all();
   return json({ items: rows.results });
+}
+
+// ------------------------------------------------------------------ 解説(Workers AI)
+
+const DEFAULT_INSIGHT_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
+
+const PENDING_SQL = `
+  FROM articles a LEFT JOIN insights i ON i.url_hash = a.url_hash
+  WHERE a.status = 'added' AND i.url_hash IS NULL AND length(COALESCE(a.summary, '')) >= ?`;
+
+/**
+ * 解説が無い記事(要約が十分にあるもの)を、新しい順に最大 limit 件、AI で作って保存する。
+ * - 一時的な失敗(API エラー)は、行を作らない(次回また試す)。
+ * - 出力が使えない形だったものは、source = 'none' で残し、再試行しない(同じ記事に枠を使い続けない)。
+ */
+async function handleEnrich(env, url) {
+  if (!env.AI) return json({ error: "ai_not_configured" }, 503);
+  const limit = Math.min(8, Math.max(1, Number(url.searchParams.get("limit")) || 5));
+  const model = env.INSIGHT_MODEL || DEFAULT_INSIGHT_MODEL;
+  const { projects } = await readPrefs(env);
+
+  const rows = await env.DB.prepare(`SELECT a.* ${PENDING_SQL} ORDER BY a.collected_at DESC LIMIT ?`)
+    .bind(MIN_SUMMARY_CHARS, limit)
+    .all();
+
+  let ok = 0;
+  let unusable = 0;
+  let errors = 0;
+  const nowIso = new Date().toISOString();
+  for (const row of rows.results) {
+    const article = rowToArticle(row);
+    let parsed;
+    try {
+      const result = await env.AI.run(model, {
+        messages: buildMessages(article, { projects, noThink: model.includes("qwen3") }),
+        max_tokens: 600,
+        temperature: 0.3,
+      });
+      parsed = parseInsight(extractText(result));
+    } catch (err) {
+      errors++;
+      console.error(JSON.stringify({ message: "ai failed", error: String(err?.message ?? err).slice(0, 200) }));
+      continue;
+    }
+    if (parsed) {
+      await env.DB.prepare(
+        "INSERT OR REPLACE INTO insights (url_hash, what, use, apply, source, model, created_at) VALUES (?, ?, ?, ?, 'ai', ?, ?)",
+      )
+        .bind(article.url_hash, parsed.what, parsed.use, parsed.apply, model, nowIso)
+        .run();
+      ok++;
+    } else {
+      await env.DB.prepare(
+        "INSERT OR REPLACE INTO insights (url_hash, source, model, created_at) VALUES (?, 'none', ?, ?)",
+      )
+        .bind(article.url_hash, model, nowIso)
+        .run();
+      unusable++;
+    }
+  }
+  const pending = await env.DB.prepare(`SELECT COUNT(*) AS n ${PENDING_SQL}`).bind(MIN_SUMMARY_CHARS).first();
+  return json({ processed: rows.results.length, ok, unusable, errors, pending: pending?.n ?? 0, model });
+}
+
+/** 記事の解説。AI が書いたものがあればそれ、無ければ、出典の種類ごとの定型の解説(source = "rule")。 */
+async function handleInsights(url, env) {
+  const hashes = [...new Set((url.searchParams.get("hashes") ?? "").split(",").map((h) => h.trim()).filter(isUrlHash))].slice(0, 60);
+  if (!hashes.length) return json({ insights: {} });
+  const rows = await env.DB.prepare(
+    `SELECT a.url_hash, a.platform, a.title, i.what, i.use, i.apply, i.source AS isrc, i.model
+     FROM articles a LEFT JOIN insights i ON i.url_hash = a.url_hash
+     WHERE a.url_hash IN (${hashes.map(() => "?").join(",")})`,
+  )
+    .bind(...hashes)
+    .all();
+  const insights = {};
+  for (const r of rows.results) {
+    insights[r.url_hash] =
+      r.isrc === "ai" && r.what
+        ? { what: r.what, use: r.use, apply: r.apply, source: "ai", model: r.model }
+        : { ...fallbackInsight({ platform: r.platform, title: r.title }), source: "rule" };
+  }
+  return json({ insights });
 }
 
 // ------------------------------------------------------------------ 検索・設定・エクスポート

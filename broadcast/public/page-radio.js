@@ -4,13 +4,43 @@
 // 読み上げはブラウザの音声(player.js)。番組表から、聴きたいコーナーの頭へ飛べる。
 
 import { navigate } from "./router.js";
-import { CATEGORIES, api, catLabel, cleanup, loadBoard } from "./store.js";
+import { CATEGORIES, api, catLabel, cleanup, isMuted, loadBoard, loadInsights, projectsFor, state } from "./store.js";
+import { pickRecommendation } from "./recommend.js";
 import { crumbs, h, jstNow, mount, renderEmpty, renderSkeleton } from "./util.js";
 import * as player from "./player.js";
 import { buildRadioProgram, formatClock } from "./radio-script.js";
 
-/** daily の episode(全体 + カテゴリ別)から、番組を作る。ホームの「全体を読み上げ」も同じ番組を使う。 */
-export function programFromEpisodes(episodes, date) {
+/**
+ * 今日のおすすめ(1本)を選ぶ。ウォッチワード・関連プロジェクトに当てはまるものを優先する。
+ * @returns {{article, score, reasons, insight, projects: string[]} | null}
+ */
+export function buildRecommendation(candidates, insights) {
+  const pick = pickRecommendation(candidates, {
+    watchwords: state.prefs.watchwords,
+    projects: state.prefs.projects,
+    insights,
+    highlights: new Set(candidates.slice(0, 5).map((a) => a.url_hash)),
+    isRead: (h) => state.board.get(h)?.state === "read",
+    isMuted,
+  });
+  if (!pick) return null;
+  const insight = insights[pick.article.url_hash] ?? null;
+  return { ...pick, insight, projects: projectsFor(pick.article) };
+}
+
+/** 番組に使う記事の解説をまとめて取る(取れなくても番組は作れる)。 */
+async function insightsFor(items) {
+  const hashes = items.map((a) => a.url_hash).filter(Boolean);
+  try {
+    await loadInsights(hashes);
+  } catch {
+    /* 解説なしで番組を作る */
+  }
+  return Object.fromEntries(hashes.filter((h) => state.insights.has(h)).map((h) => [h, state.insights.get(h)]));
+}
+
+/** daily の episode(全体 + カテゴリ別)から、番組を作る。ホームの「番組を再生」も同じ番組を使う。 */
+export async function programFromEpisodes(episodes, date) {
   const all = episodes.find((e) => e.category === null);
   if (!all) return null;
   const byCat = Object.fromEntries(episodes.filter((e) => e.category).map((e) => [e.category, e]));
@@ -23,12 +53,21 @@ export function programFromEpisodes(episodes, date) {
   // あいさつの時間帯。今日の放送は今の時刻、過去の日付は昼の扱い
   const today = jstNow().toISOString().slice(0, 10);
   const hour = date === today ? jstNow().getUTCHours() : 12;
+  const highlights = all.data.highlights ?? [];
+  const items = [...highlights, ...lanes.flatMap((l) => l.items.slice(0, 4))];
+  const insights = await insightsFor(items);
+  const rec = buildRecommendation(items, insights);
+  const ins = rec?.insight;
   return buildRadioProgram({
     date,
     hour,
     total: all.data.counts?.total ?? 0,
-    highlights: all.data.highlights ?? [],
+    highlights,
     lanes,
+    insights,
+    recommend: rec && ins
+      ? { title: rec.article.title, what: ins.what, use: ins.use, apply: ins.apply, projects: rec.projects }
+      : null,
   });
 }
 
@@ -37,7 +76,7 @@ export function programChapters(program) {
   return program.corners.map((c) => ({ label: c.label, text: c.speech, jingle: c.jingle }));
 }
 
-const KIND_LABEL = { open: "OP", headlines: "注目", category: "コーナー", close: "ED" };
+const KIND_LABEL = { open: "OP", headlines: "注目", recommend: "おすすめ", category: "コーナー", close: "ED" };
 
 export async function pageRadio(view, params) {
   mount(view, renderSkeleton());
@@ -49,7 +88,7 @@ export async function pageRadio(view, params) {
     loadBoard(),
   ]);
 
-  const program = date ? programFromEpisodes(episodes, date) : null;
+  const program = date ? await programFromEpisodes(episodes, date) : null;
   if (!program) {
     mount(view, 
       h("h1", null, "リサーチ", h("em", null, "ラジオ")),

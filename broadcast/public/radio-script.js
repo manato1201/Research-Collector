@@ -76,12 +76,23 @@ export function firstSentence(text, max = 80) {
   // 日本語の句点は直後に空白が無い。ASCII の . ! ? は、後ろが空白か末尾のときだけ文の終わりとみなす
   const m = /^(.+?(?:[。！？]|[.!?](?=\s|$)))/.exec(s);
   const one = m ? m[1] : s;
-  return one.length > max ? one.slice(0, max - 1) : one;
+  if (one.length <= max) return one;
+  // 長いときは、語の途中で切らない(空白・読点で、後半の範囲に切れ目があればそこで切る)
+  const head = one.slice(0, max);
+  const cut = Math.max(head.lastIndexOf(" "), head.lastIndexOf("、"), head.lastIndexOf(","));
+  return cut >= max * 0.5 ? head.slice(0, cut).trim() : head.slice(0, max - 1);
 }
 
 /** 記事の題名を、読み上げ向けに整える(末尾の「…」・先頭末尾の空白)。 */
 export function cleanTitle(title) {
-  return String(title ?? "").replace(/(…|\.{3,})\s*$/, "").trim();
+  const t = String(title ?? "").trim();
+  const m = /(…|\.{3,})\s*$/.exec(t);
+  if (!m) return t;
+  // 「…」で切れている題名(フィードが40字で切る)は、語の途中の残りを落とす
+  const head = t.slice(0, m.index).trimEnd();
+  if (head.length < 36) return head; // 短いものは、題名の側で省略した「…」。語は欠けていない
+  const cut = head.lastIndexOf(" ");
+  return (cut >= head.length * 0.5 ? head.slice(0, cut) : head).trim();
 }
 
 /** 1秒あたり約6.5字(ゆっくりめの日本語)。速度 rate 倍で短くなる。 */
@@ -102,31 +113,98 @@ const SHORT = {
   software_engineering: "ソフトウェア工学",
 };
 
-const itemSentence = (it, lead, maxSum) => {
-  const t = cleanTitle(it.title);
-  const sum = firstSentence(it.summary, maxSum);
-  // 要約が題名と同じ書き出しなら、繰り返さない
-  const dup = sum && (sum.startsWith(t.slice(0, 12)) || t.startsWith(sum.slice(0, 12)));
-  return `${lead}${t}。${sum && !dup ? `${sum}` : ""}`;
+const hasJapanese = (s) => /[\u3040-\u30ff\u4e00-\u9fff]/.test(String(s ?? ""));
+
+const endSentence = (s) => {
+  const t = String(s ?? "").trim().replace(/[。.!！?？]+$/, "");
+  return t ? `${t}。` : "";
 };
+
+/**
+ * 記事1本の紹介。AI の解説があれば「題名 + これは何か + 何ができるか」、無ければ「題名 + 要約の最初の1文」。
+ * 解説は、題名と要約だけを根拠に AI が書いたもの(worker の /api/insights)。
+ */
+const itemSentence = (it, lead, maxSum, ins = null) => {
+  const t = cleanTitle(it.title);
+  if (ins && ins.source === "ai" && ins.what) {
+    // 英語の題名(バージョン番号つきの更新履歴など)は、音声で読んでも聞き取りにくい。日本語の解説を主にする
+    const head = hasJapanese(t) ? endSentence(t) : "";
+    return `${lead}${head}${endSentence(ins.what)}${endSentence(ins.use)}`;
+  }
+  const sum = firstSentence(it.summary, maxSum);
+  // 要約が題名と同じ書き出しなら、繰り返さない。英語だけの要約は、日本語の音声では聞き取りにくいので読まない
+  const dup = sum && (sum.startsWith(t.slice(0, 12)) || t.startsWith(sum.slice(0, 12)));
+  const readable = sum && (hasJapanese(sum) || hasJapanese(t));
+  return `${lead}${endSentence(t)}${readable && !dup ? endSentence(sum) : ""}`;
+};
+
+/**
+ * 「今日のおすすめ」のコーナーの原稿(広告風の紹介: 何か → 読むと何ができるか → どう応用できるか)。
+ * @param {{title: string, what: string, use: string, apply: string, projects?: string[]}} rec
+ */
+export function recommendText(rec) {
+  const lines = [
+    "ここで、今日のおすすめをご紹介します。",
+    // 英語の題名は、聞き取りにくいので読まない(日本語の解説を主にする)
+    hasJapanese(rec.title) ? endSentence(cleanTitle(rec.title)) : "",
+    endSentence(rec.what),
+    rec.use ? `この記事を読むと、${endSentence(rec.use)}` : "",
+    rec.apply ? `たとえば、${endSentence(rec.apply)}` : "",
+    rec.projects?.length ? `${rec.projects.slice(0, 2).join("、")}に関係しそうです。` : "",
+    "詳しくは、サイトの、今日のおすすめからどうぞ。",
+  ];
+  return lines.filter(Boolean).join(" ");
+}
 
 /**
  * @param {object} p
  * @param {string} p.date            放送の日付 YYYY-MM-DD
  * @param {number} p.hour            時(JST。あいさつに使う)
  * @param {number} p.total           新着の総数(URL単位)
- * @param {Array}  p.highlights      注目の記事 [{title, summary}]
- * @param {Array}  p.lanes           [{id, label, count, items:[{title, summary}]}]  表示順
- * @param {number} [p.perCorner=4]   コーナーごとに読む記事数
+ * @param {Array}  p.highlights      注目の記事 [{url_hash, title, summary, platform}]
+ * @param {Array}  p.lanes           [{id, label, count, items:[{url_hash, title, summary, platform}]}]  表示順
+ * @param {number} [p.perCorner=4]   コーナーごとに読む記事数(解説があるときは3本まで)
+ * @param {object} [p.insights]      {url_hash: {what, use, apply, source: "ai"|"rule"}}(worker の /api/insights)
+ * @param {object} [p.recommend]     今日のおすすめ {title, what, use, apply, projects}。あればコーナーにする
  * @returns {{title: string, corners: Array<{id, label, kind, text, speech, jingle, seconds}>, totalSeconds: number}}
  */
-export function buildRadioProgram({ date, hour = 12, total, highlights = [], lanes = [], perCorner = 4 }) {
+export function buildRadioProgram({
+  date, hour = 12, total, highlights = [], lanes = [], perCorner = 4, insights = {}, recommend = null,
+}) {
   const corners = [];
   const live = lanes.filter((l) => l.count > 0);
+  const per = Object.keys(insights).length ? Math.min(perCorner, 3) : perCorner;
+  const explained = new Set(); // 出典の紹介は、番組の中で1回だけ
+  const spoken = new Set(); // 同じ記事を、別のコーナーでもう一度読まない(複数カテゴリの記事)
+  const keyOf = (it) => it.url_hash ?? it.url ?? it.title;
 
-  const breakdown = live
-    .map((l) => `${SHORT[l.id] ?? l.label}が${l.count}件`)
-    .join("、");
+  /** 解説(AI)のある記事を先に、すでに読んだ記事は除いて、n本を選ぶ。 */
+  const choose = (items, n) => {
+    const fresh = items.filter((it) => !spoken.has(keyOf(it)));
+    // 優先: ① AI の解説がある ② 題名か要約が日本語 ③ 英語だけ(音声で聞き取りにくいので、最後)
+    const rank = (it) =>
+      insights[it.url_hash]?.source === "ai" ? 0 : hasJapanese(it.title) || hasJapanese(it.summary) ? 1 : 2;
+    const picked = fresh
+      .map((it, i) => ({ it, i, r: rank(it) }))
+      .sort((a, b) => a.r - b.r || a.i - b.i)
+      .slice(0, n)
+      .map((x) => x.it);
+    picked.forEach((it) => spoken.add(keyOf(it)));
+    return picked;
+  };
+
+  // 解説が無い記事の出典を、最初の1回だけ「これは何の情報か」として紹介する
+  const sourceNote = (it) => {
+    const ins = insights[it.url_hash];
+    if (!it.platform || explained.has(it.platform) || (ins && ins.source === "ai")) return "";
+    const rule = ins && ins.source === "rule" ? ins : null;
+    if (!rule) return "";
+    explained.add(it.platform);
+    return ` ちなみに、${endSentence(rule.what)}`;
+  };
+  const sentence = (it, lead, maxSum) => itemSentence(it, lead, maxSum, insights[it.url_hash]) + sourceNote(it);
+
+  const breakdown = live.map((l) => `${SHORT[l.id] ?? l.label}が${l.count}件`).join("、");
   corners.push({
     id: "open",
     kind: "open",
@@ -146,16 +224,26 @@ export function buildRadioProgram({ date, hour = 12, total, highlights = [], lan
       jingle: "corner",
       text:
         "注目のニュースです。" +
-        highlights
-          .slice(0, 3)
-          .map((it, i) => itemSentence(it, `${i + 1}本目。`, 70))
+        choose(highlights, 3)
+          .map((it, i) => sentence(it, `${i + 1}本目。`, 70))
           .join(" "),
+    });
+  }
+
+  if (recommend) {
+    corners.push({
+      id: "recommend",
+      kind: "recommend",
+      label: "今日のおすすめ",
+      jingle: "corner",
+      text: recommendText(recommend),
     });
   }
 
   for (const l of live) {
     const name = SHORT[l.id] ?? l.label;
-    const shown = l.items.slice(0, perCorner);
+    const shown = choose(l.items, per);
+    if (!shown.length) continue; // 読む記事が、他のコーナーで読み終わっている
     const rest = l.count - shown.length;
     corners.push({
       id: l.id,
@@ -164,7 +252,7 @@ export function buildRadioProgram({ date, hour = 12, total, highlights = [], lan
       jingle: "corner",
       text:
         `${name}のコーナーです。新着は${l.count}件。` +
-        shown.map((it, i) => itemSentence(it, LEAD[Math.min(i, LEAD.length - 1)], 60)).join(" ") +
+        shown.map((it, i) => sentence(it, LEAD[Math.min(i, LEAD.length - 1)], 60)).join(" ") +
         (rest > 0 ? ` ほか${rest}件は、サイトでご覧ください。` : ""),
     });
   }

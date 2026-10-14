@@ -2,7 +2,7 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { formatDateTime, h, jstToday, shortDate, toast } from "./util.js";
-import { AuthError, BOARD_LABELS, DRAWER_STATES, api, catLabel, cleanup, dot, projectsFor, state } from "./store.js";
+import { AuthError, BOARD_LABELS, DRAWER_STATES, api, catLabel, cleanup, dot, loadInsights, projectsFor, state } from "./store.js";
 import { navigate } from "./router.js";
 import * as player from "./player.js";
 
@@ -156,6 +156,20 @@ export function buildDrawerBody(a) {
 
   wrap.append(dl);
   if (sum) wrap.append(sum);
+  // 解説(これは何か / 何ができるか / どう応用できるか)。取得できたら差し込む
+  const insightBox = h("section", { class: "insight", "aria-label": "この記事の解説", hidden: true });
+  wrap.append(insightBox);
+  if (a.url_hash) {
+    loadInsights([a.url_hash])
+      .then((m) => {
+        const ins = m.get(a.url_hash);
+        if (ins) {
+          insightBox.replaceChildren(...renderInsightParts(ins));
+          insightBox.hidden = false;
+        }
+      })
+      .catch(() => {});
+  }
   const readOne = readButton("この記事を読み上げ", a.title, () => [{ label: "記事", text: `${a.title}。${a.summary ?? ""}` }]);
   wrap.append(h("div", { class: "drawer-actions" }, open, readOne), stateBox, noteInput);
   return wrap;
@@ -191,6 +205,39 @@ export function refreshItemBadges(hash) {
       li.querySelector(".item-meta")?.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
     }
   }
+}
+
+/**
+ * 解説の表示部品。AI が書いたものは「AIの解説」と明示し、根拠(題名と要約だけ)と、誤りの可能性を添える。
+ * 定型のもの(source = "rule")は、「この出典について」。
+ */
+export function renderInsightParts(ins) {
+  const isAi = ins.source === "ai";
+  return [
+    h(
+      "h3",
+      null,
+      isAi ? "この記事について" : "この出典について",
+      h("span", { class: `badge${isAi ? " state" : ""}` }, isAi ? "AIの解説" : "出典の解説"),
+    ),
+    h(
+      "dl",
+      { class: "insight-list" },
+      h("dt", null, "これは"),
+      h("dd", null, ins.what),
+      h("dt", null, "できること"),
+      h("dd", null, ins.use),
+      h("dt", null, "応用"),
+      h("dd", null, ins.apply),
+    ),
+    h(
+      "p",
+      { class: "tool-note" },
+      isAi
+        ? "題名と要約だけを根拠に、AI が書いたものです。誤りを含むことがあります。詳しくは、元の記事を確認してください。"
+        : "この出典の記事に共通する説明です(個別の記事の内容ではありません)。",
+    ),
+  ];
 }
 
 /** 通知を出さずに既読にする(記事のリンクを開いたときなど)。失敗しても、記事は開ける。 */
@@ -263,8 +310,20 @@ export function readButton(label, title, build) {
           player.stop();
           return;
         }
-        const payload = build();
-        if (!player.read({ title, chapters: payload })) toast("読み上げる内容がありません", true);
+        // 内容の組み立てに、解説の取得などで時間がかかることがある(その間は、ボタンを押せないようにする)
+        btn.disabled = true;
+        Promise.resolve()
+          .then(build)
+          .then((payload) => {
+            if (!player.read({ title, chapters: payload })) toast("読み上げる内容がありません", true);
+          })
+          .catch((err) => {
+            if (err instanceof AuthError) navigate("/login");
+            else toast("読み上げの準備ができませんでした。時間をおいてやり直してください", true);
+          })
+          .finally(() => {
+            btn.disabled = false;
+          });
       },
     },
     label,

@@ -46,7 +46,9 @@ test("firstSentence and cleanTitle", () => {
   assert.equal(firstSentence("最初の文です。二つ目です。"), "最初の文です。");
   assert.equal(firstSentence("a".repeat(200), 20).length, 19);
   assert.equal(firstSentence(""), "");
-  assert.equal(cleanTitle('22.0.468: Added "Invert Option + Swipe...'), '22.0.468: Added "Invert Option + Swipe');
+  // フィードが約40字で切った題名は、語の途中の残りを落とす。短い題名の「…」は、そのまま外す
+  assert.equal(cleanTitle('22.0.468: Added "Invert Option + Swipe...'), '22.0.468: Added "Invert Option +');
+  assert.equal(cleanTitle("短い題名…"), "短い題名");
 });
 
 test("estimate and clock", () => {
