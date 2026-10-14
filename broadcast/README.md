@@ -39,6 +39,7 @@
 | パス | 内容 |
 | --- | --- |
 | `/` | 今日の放送。速報ティッカー(停止できる)・注目・カテゴリ別の3レーン・日付の切り替え・全体/カテゴリ別の読み上げ・最新レポートへのリンク・配布サイトの新着(ウォッチ)。複数カテゴリの記事は「ほかのカテゴリにも」バッジ |
+| (ホーム・ドロワー) | **今日のおすすめ**(広告風のカード: これは何か / できること / 応用)と、各記事の「この記事について」。AI が書いたものは「AIの解説」と明示し、根拠(題名と要約だけ)と、誤りの可能性を添える |
 | `/c/<category>` | カテゴリ。今日のヘッドライン・期間(今日 / 今週 / 30日 / 先月。上に固定)・収集元のチップ・要確認のみ・ページの読み上げ |
 | `/radio` | ラジオ。その日の放送を番組(オープニング → 注目 → カテゴリ別のコーナー → エンディング)として聴く。ON AIR・等化器・番組表(コーナーの開始時刻の目安)・スリープタイマー・効果音(ジングル)・原稿の表示 |
 | `/search?q=` | 検索。結果から、ウォッチワードに保存できる |
@@ -134,6 +135,8 @@ Content-Type: application/json
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
 | `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
 | `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
+| `POST /api/enrich?limit=` | **Bearer のみ** | 解説(これは何か / 何ができるか / どう応用できるか)を、Workers AI(無料枠)で作って保存する。解説の無い、要約が40字以上ある記事を、新しい順に最大8件。`scripts/enrich.py`(日次ワークフロー)が呼ぶ |
+| `GET /api/insights?hashes=` | 同上 | 記事の解説(最大60件)。AI が書いたもの(`source: "ai"`)。無ければ、出典の種類ごとの定型の解説(`source: "rule"`) |
 | `GET /api/search?q=` | 同上 | 記事の検索。空白区切りはAND。3文字以上の語は全文検索(FTS5 trigram。日本語も部分一致)、短い語は LIKE |
 | `GET /api/watchwords` | 同上 | ウォッチワードごとの、直近7日(収集した日)の件数と新着3件 |
 | `GET /api/prefs` / `PUT /api/prefs/{key}` | 同上(書き込みは Cookie のとき Origin も検査) | 設定。`watchwords`(10個まで)/ `projects`(関連プロジェクト。12個まで)/ `muted_sources`(非表示の収集元) |
@@ -156,7 +159,8 @@ cd broadcast
 npm install
 cp .dev.vars.example .dev.vars          # INGEST_TOKEN と VIEW_PASSWORD を好きな文字列に(.dev.vars はコミットされない)
 npx wrangler d1 migrations apply DB --local
-npx wrangler dev --local                # http://127.0.0.1:8787  (ブラウザで開き、VIEW_PASSWORD でログイン)
+npx wrangler dev                        # http://127.0.0.1:8787  (ブラウザで開き、VIEW_PASSWORD でログイン)
+# D1 はローカル。AI(解説の生成)だけは、設定("remote": true)でCloudflareの実物を使う(wrangler login が要る。--local を付けると AI は使えない)
 ```
 
 別のターミナルから(リポジトリのルートで):
@@ -169,9 +173,9 @@ python scripts/post_ingest.py --since-hours 100000
 
 テスト:
 
-- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。62項目。ラジオ原稿・読み上げの分割・設定・検索・モジュールの整合を含む)
-- `python broadcast/test/integration_local.py` — `wrangler dev --local` を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(117項目。検索・設定・まとめて既読・書き出しを含む。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
-- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(128項目。検索・既読・キーボード・設定・PWA・オフラインを含む。ラジオ・追加カテゴリ・「null」文字の混入なし・ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
+- `npm test` — 検証・認証ロジックの単体テスト(ランタイム不要。87項目。ラジオ原稿・解説の検証・おすすめの選び方・読み上げの分割・設定・検索・モジュールの整合を含む)
+- `python broadcast/test/integration_local.py` — `npx wrangler dev`(`--local` は付けない。解説の生成に AI を使うため)を起動した状態で、実クライアントと実際の記事ログを使った結合テスト(123項目。検索・設定・まとめて既読・書き出し・解説(実際に Workers AI を呼ぶ)を含む。認証・冪等・episode・レポート・ウォッチ・ボード・ログイン・CSRF・範囲外カテゴリの拒否など)。ローカルのD1にだけ書き込む
+- `python broadcast/test/browser_local.py` — 同じ状態で、Playwright(Chromium)によるサイトの確認(133項目。今日のおすすめ・解説・検索・既読・キーボード・設定・PWA・オフラインを含む。ラジオ・追加カテゴリ・「null」文字の混入なし・ログイン・ドロワー・ボードの保持・再生バー・速報・レポートの安全な描画・週次の図・ボトムシート・スマホ幅の横はみ出し・動きの軽減・ログアウト・CSP違反なし)。`pip install playwright && playwright install chromium` が要る
 
 ---
 

@@ -37,6 +37,10 @@
     }
   ],
 
+  // 解説(これは何か・何ができるか・どう応用できるか)の生成。Workers AI の無料枠(1日 10,000 Neurons)の範囲。
+  // モデルは、環境変数 INSIGHT_MODEL で差し替えられる(既定: @cf/qwen/qwen3-30b-a3b-fp8。評価は DOCUMENT.md 12.17)
+  "ai": { "binding": "AI", "remote": true },
+
   "observability": {
     "enabled": true,
     "logs": { "head_sampling_rate": 1 }

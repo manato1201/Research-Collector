@@ -408,6 +408,25 @@ check("export pages through every article", tot == call("GET", "/api/status")[1]
 check("export rejects unknown tables", call("GET", "/api/export?table=sqlite_master")[0] == 400)
 check("export is bearer-only", call("GET", "/api/export?table=articles", token=None)[0] == 401)
 
+# --- 解説(これは何か / 何ができるか / どう応用できるか)
+recent = [a["url_hash"] for a in call("GET", "/api/articles?status=added&limit=30")[1]["articles"]]
+s, r = call("GET", "/api/insights?hashes=" + ",".join(recent[:20]))
+check("insights are returned for known articles (AI or the source's standard text)",
+      s == 200 and len(r["insights"]) >= 1 and all(v["source"] in ("ai", "rule") and v["what"] and v["use"] and v["apply"] for v in r["insights"].values()),
+      (s, str(r)[:200]))
+check("insights ignore malformed hashes", call("GET", "/api/insights?hashes=../../etc,zzzz")[1] == {"insights": {}})
+check("enrich is bearer-only", call("POST", "/api/enrich", token=None)[0] == 401)
+s, r = call("POST", "/api/enrich?limit=1")
+if s == 503:
+    print("SKIP enrich checks (AI binding not available)")
+else:
+    check("enrich reports what it did", s == 200 and all(k in r for k in ("processed", "ok", "unusable", "errors", "pending", "model")), (s, r))
+    if s == 200 and r["ok"] >= 1:
+        s2, r2 = call("GET", "/api/insights?hashes=" + ",".join(recent))
+        check("an enriched article now carries an AI insight", any(v["source"] == "ai" for v in r2["insights"].values()), str(r2)[:200])
+    s3, r3 = call("POST", "/api/enrich?limit=1")
+    check("enrich is repeatable (idempotent per article)", s3 == 200, (s3, r3))
+
 # --- ログイン(人)・Cookie・CSRF
 if VIEW_PASSWORD:
     s, r, _ = call_raw("GET", "/api/session")

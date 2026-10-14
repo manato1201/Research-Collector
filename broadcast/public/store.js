@@ -60,6 +60,7 @@ export const state = {
   categoriesLoaded: false,
   prefs: { watchwords: [], muted_sources: [], projects: [] },
   prefsLoaded: false,
+  insights: new Map(), // url_hash -> {what, use, apply, source}
   session: { authenticated: false, via: null, login_enabled: false },
   status: null,
   statusAt: 0,
@@ -136,6 +137,21 @@ export function setHideRead(on) {
   }
 }
 
+/**
+ * 記事の解説(これは何か / 何ができるか / どう応用できるか)。AI が題名と要約から書いたもの(source = "ai")か、
+ * 無ければ出典の種類ごとの定型の解説(source = "rule")。取得済みのものは再取得しない。
+ * @returns {Promise<Map<string, object>>} state.insights
+ */
+export async function loadInsights(hashes) {
+  const need = [...new Set(hashes)].filter((h) => h && !state.insights.has(h));
+  for (let i = 0; i < need.length; i += 60) {
+    const chunk = need.slice(i, i + 60);
+    const res = await api(`/api/insights?hashes=${chunk.join(",")}`);
+    for (const [h, v] of Object.entries(res.insights ?? {})) state.insights.set(h, v);
+  }
+  return state.insights;
+}
+
 export async function loadStatus(force = false) {
   if (!force && state.status && Date.now() - state.statusAt < 60_000) return state.status;
   state.status = await api("/api/status");
@@ -152,6 +168,7 @@ export function resetSessionState() {
   state.categoriesLoaded = false;
   state.prefs = { watchwords: [], muted_sources: [], projects: [] };
   state.prefsLoaded = false;
+  state.insights = new Map();
   EXTRA = [];
   state.status = null;
 }

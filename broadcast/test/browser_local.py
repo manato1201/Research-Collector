@@ -387,6 +387,28 @@ with sync_playwright() as p:
     page.context.set_offline(False)
     page.wait_for_timeout(300)
 
+    # --- 解説(これは何か・できること・応用)と「今日のおすすめ」(広告風)
+    page.goto(BASE + "/")
+    page.wait_for_selector(".lanes")
+    page.wait_for_selector(".reco", timeout=10000)
+    check("home: today's pick-up card with what / use / apply",
+          "PICK UP" in page.inner_text(".reco") and page.locator(".reco .insight-list dd").count() == 3
+          and len(page.inner_text(".reco .reco-title").strip()) > 0)
+    check("home: the pick-up card says whether the text is AI-written or standard",
+          page.locator(".reco .badge", has_text="解説").count() >= 1)
+    page.locator(".reco button", has_text="詳しく見る").click()
+    page.wait_for_selector("#drawer:not([hidden])")
+    page.wait_for_selector("#drawer .insight:not([hidden])", timeout=8000)
+    check("drawer: insight block with all three parts and a caution note",
+          page.locator("#drawer .insight dd").count() == 3 and "誤り" in page.inner_text("#drawer .insight") or "共通する説明" in page.inner_text("#drawer .insight"))
+    page.keyboard.press("Escape")
+    page.goto(BASE + "/radio")
+    page.wait_for_selector(".guide-row")
+    check("radio: a 'today's pick' corner is in the program guide",
+          page.locator(".guide-row", has_text="今日のおすすめ").count() == 1)
+    check("radio: the script explains what it is and how to use it",
+          "この記事を読むと" in page.evaluate("document.querySelector('.script').textContent"))
+
     # --- テーマ
     before = page.evaluate("document.documentElement.getAttribute('data-theme')")
     page.click("#theme-btn")
