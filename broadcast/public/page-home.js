@@ -2,10 +2,10 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { addDays, countUp, h, jstToday, mount, renderEmpty, renderSkeleton, shortDate } from "./util.js";
-import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, loadBoard, loadStatus, unmuted } from "./store.js";
-import { buildTicker, itemsToChapters, markAllRead, readButton, renderItem } from "./components.js";
+import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, loadBoard, loadInsights, loadStatus, state, unmuted } from "./store.js";
+import { buildTicker, itemsToChapters, markAllRead, openDrawer, readButton, renderInsightParts, renderItem } from "./components.js";
 import { navigate } from "./router.js";
-import { programChapters, programFromEpisodes } from "./page-radio.js";
+import { buildRecommendation, programChapters, programFromEpisodes } from "./page-radio.js";
 
 const HOME_LANE_ITEMS = 8;
 
@@ -67,7 +67,9 @@ export async function pageHome(view, params) {
   );
 
   // 全体の読み上げ: ラジオの番組(オープニング → 注目 → カテゴリ別のコーナー → エンディング)
-  const readAll = readButton("番組を再生(ラジオ)", `${date} の放送`, () => programChapters(programFromEpisodes(episodes, date)));
+  const readAll = readButton("番組を再生(ラジオ)", `${date} の放送`, async () =>
+    programChapters(await programFromEpisodes(episodes, date)),
+  );
   const radioLink = h("a", { class: "btn", href: "/radio", "data-link": "" }, "ラジオを開く");
 
   const picker = h("div", { class: "lane-picker", role: "group", "aria-label": "カテゴリを選ぶ" });
@@ -127,6 +129,17 @@ export async function pageHome(view, params) {
     }
   }
 
+  // 今日のおすすめ(広告風の紹介: 何か → 読むと何ができるか → どう応用できるか)
+  const recCandidates = [...highlights, ...CATEGORIES.flatMap((c) => unmuted(lanes[c]?.data.items ?? []).slice(0, 4))];
+  let recInsights = {};
+  try {
+    await loadInsights(recCandidates.map((a) => a.url_hash));
+    recInsights = Object.fromEntries(recCandidates.filter((a) => state.insights.has(a.url_hash)).map((a) => [a.url_hash, state.insights.get(a.url_hash)]));
+  } catch {
+    /* 解説なしで、おすすめを選ぶ */
+  }
+  const reco = buildRecoCard(buildRecommendation(recCandidates, recInsights));
+
   const latestReport = status?.reports?.latest;
   const reportLink = latestReport
     ? h("a", { class: "btn", href: `/reports/${encodeURIComponent(`digest:${latestReport}`)}`, "data-link": "" }, `最新のレポート(${latestReport})`)
@@ -169,6 +182,7 @@ export async function pageHome(view, params) {
       h("div", { class: "stats" }, stat(counts.total, "新着(URL単位)", "new"), stat(counts.review, "要確認")),
     ),
     buildTicker(tickerItems),
+    reco,
     h("div", { class: "row-controls" }, dateSelect, readAll, radioLink, reportLink),
     hl,
     picker,
@@ -179,6 +193,49 @@ export async function pageHome(view, params) {
   );
   applyMobile();
   countUp(view); // トップの動きは「カウントアップ」と「速報の流れ」の2種類(フェードインは使わない)
+}
+
+/** 今日のおすすめのカード。広告風: キャッチ(これは何か)→ できること → 応用 → 行動(詳細・記事・読み上げ)。 */
+function buildRecoCard(rec) {
+  if (!rec) return null;
+  const a = rec.article;
+  const ins = rec.insight;
+  const parts = ins ? renderInsightParts(ins).filter((n) => n.tagName !== "H3") : [];
+  return h(
+    "section",
+    { class: "reco", "aria-labelledby": "reco-title" },
+    h(
+      "div",
+      { class: "reco-head" },
+      h("span", { class: "reco-label" }, "PICK UP", h("small", null, "今日のおすすめ")),
+      ins ? h("span", { class: `badge${ins.source === "ai" ? " state" : ""}` }, ins.source === "ai" ? "AIの解説" : "出典の解説") : null,
+    ),
+    h("h2", { id: "reco-title", class: "reco-title" }, a.title),
+    rec.reasons.length
+      ? h(
+          "p",
+          { class: "reco-why" },
+          ...rec.reasons.map((r) =>
+            h("span", { class: "badge project", title: r.kind === "project" ? "関連プロジェクトに当てはまります" : "ウォッチワードに当てはまります" },
+              r.kind === "project" ? `# ${r.name}` : `「${r.name}」`),
+          ),
+        )
+      : null,
+    ...parts,
+    h(
+      "div",
+      { class: "row-controls" },
+      h("button", { class: "btn primary", type: "button", onclick: () => openDrawer({ ...a, other_categories: [] }) }, "詳しく見る"),
+      h("a", { class: "btn", href: a.url, target: "_blank", rel: "noopener noreferrer" }, "記事を開く"),
+      readButton("この記事を紹介", `おすすめ: ${a.title}`, () => [
+        {
+          label: "今日のおすすめ",
+          jingle: "corner",
+          text: ins ? `今日のおすすめです。${a.title}。${ins.what} この記事を読むと、${ins.use} たとえば、${ins.apply}` : `今日のおすすめです。${a.title}。`,
+        },
+      ]),
+    ),
+  );
 }
 
 /** ウォッチワードの、直近7日の件数。設定が無いときは、設定への案内だけを小さく出す。 */
