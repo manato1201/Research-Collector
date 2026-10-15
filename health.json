@@ -1,12 +1,12 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-15T09:07:10Z",
+    "run_at": "2026-10-15T21:07:07Z",
     "collected": 119,
-    "new": 10,
-    "notebooklm_ok": 19,
-    "notebooklm_skip": 0,
-    "notebooklm_errors": 0,
+    "new": 12,
+    "notebooklm_ok": 15,
+    "notebooklm_skip": 1,
+    "notebooklm_errors": 1,
     "notebooks_deleted": 0,
     "notebooks_total": 85,
     "unclassified": 0,
@@ -38,7 +38,7 @@
         "error": "rate limited (HTTP 429): 6 queries skipped"
       }
     ],
-    "watch_new": 3
+    "watch_new": 4
   },
   "weekly": {
     "status": "error",
