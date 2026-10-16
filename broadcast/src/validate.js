@@ -504,7 +504,7 @@ export function escapeLike(s) {
 
 // ------------------------------------------------------------------ エクスポート(バックアップ)
 
-export const EXPORT_TABLES = ["articles", "episodes", "reports", "board", "watch", "prefs", "meta"];
+export const EXPORT_TABLES = ["articles", "episodes", "reports", "board", "watch", "prefs", "meta", "insights"];
 
 // ------------------------------------------------------------------ ボード
 

@@ -12,7 +12,6 @@ import logging
 import time
 import urllib.parse
 import urllib.request
-import json
 from datetime import datetime, timezone
 
 from ._academic_api import S2_GIVE_UP_AFTER, S2RateLimited, fetch_json_s2

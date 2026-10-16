@@ -16,7 +16,6 @@ from typing import Optional
 from notebooklm import NotebookLMClient
 
 from .notebook_ids import (
-    NOTEBOOK_IDS_FIXED,
     SOURCE_TYPE_TO_CATEGORIES,
     CATEGORY_TO_NOTEBOOK_NAME,
 )

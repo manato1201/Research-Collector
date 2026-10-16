@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BACKUP_DIR = os.path.join(ROOT, "backup")
-TABLES = ("articles", "episodes", "reports", "board", "watch", "prefs", "meta")
+TABLES = ("articles", "episodes", "reports", "board", "watch", "prefs", "meta", "insights")
 PAGE = 200
 
 logger = logging.getLogger("backup_d1")
