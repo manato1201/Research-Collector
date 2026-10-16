@@ -149,7 +149,7 @@ log += [
 
 # 実クライアント(post_ingest)の build_batches / post をそのまま使う
 sys.path.insert(0, REPO)
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.join(REPO, "scripts"))
 import post_ingest as pi
 health = json.load(open(os.path.join(REPO, "health.json"), encoding="utf-8"))
@@ -205,6 +205,16 @@ check("injection-like input -> 400", call("GET", "/api/articles?category=%27%20O
 st = call("GET", "/api/status")[1]
 check("last_ingest records the latest attempt (the all-rejected one)", st["last_ingest"]["accepted"] == 0 and st["last_ingest"]["rejected"] == 1, st["last_ingest"])
 check("last_success_at is kept (not overwritten by the rejection)", bool(st["last_success_at"]), st)
+
+# --- 保持期間(RETENTION_DAYS)を過ぎた記事は、取り込みのたびに消える
+OLD = "eeeeeeeeeeeeeee1"
+old_at = (datetime.now(timezone.utc) - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+s, r = call("POST", "/api/ingest", {"schema": 1, "articles": [
+    {"url_hash": OLD, "url": "https://example.com/old", "title": "古い記事", "source_type": "blog", "platform": "zenn",
+     "categories": ["game_dev_tech"], "status": "added", "collected_at": old_at, "summary": "あ" * 60}]})
+check("an article past the retention period is accepted, then purged by the same ingest",
+      s == 200 and r["accepted"] == 1 and call("GET", "/api/status")[1]["last_ingest"]["purged"] >= 1
+      and not [a for a in call("GET", "/api/search?q=%E5%8F%A4%E3%81%84%E8%A8%98%E4%BA%8B")[1]["articles"] if a["url_hash"] == OLD], (s, r))
 
 # --- episode(番組表)
 ep_ids = sorted(e["id"] for e in episodes)

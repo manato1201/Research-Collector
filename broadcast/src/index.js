@@ -313,6 +313,10 @@ INSERT INTO watch (url, watch, title, detected_at, updated_at)
 VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(url) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`;
 
+const UPSERT_PREF_SQL = `
+INSERT INTO prefs (key, value, updated_at) VALUES (?, ?, ?)
+ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`;
+
 const UPSERT_META_SQL =
   "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
 
@@ -377,6 +381,10 @@ async function handleIngest(request, env) {
   await env.DB.prepare("DELETE FROM episodes WHERE kind = 'daily' AND date < ?")
     .bind(cutoff.toISOString().slice(0, 10))
     .run();
+  // 記事と一緒に、持ち主を失った解説も消す(board は、記事が消えてもメモを残す設計なので消さない)
+  if ((purged.meta?.changes ?? 0) > 0) {
+    await env.DB.prepare("DELETE FROM insights WHERE url_hash NOT IN (SELECT url_hash FROM articles)").run();
+  }
 
   // 古い検知(ウォッチ)も、記事と同じ保持期間で消す
   await env.DB.prepare("DELETE FROM watch WHERE detected_at < ?")
@@ -761,10 +769,6 @@ async function handlePrefWrite(request, env, key) {
   await env.DB.prepare(UPSERT_PREF_SQL).bind(key, JSON.stringify(v.value), new Date().toISOString()).run();
   return json({ ok: true, key, value: v.value });
 }
-
-const UPSERT_PREF_SQL = `
-INSERT INTO prefs (key, value, updated_at) VALUES (?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`;
 
 /** ウォッチワードごとの、直近7日(収集した日)の件数と、新しい記事の見出し(3件)。 */
 async function handleWatchwords(env) {

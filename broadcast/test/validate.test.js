@@ -306,3 +306,11 @@ test("article query: collected_until makes a collected-date range", () => {
   assert.deepEqual(q.params, ["2026-09-01", "2026-09-30"]);
   assert.equal(buildArticleQuery(new URLSearchParams("collected_until=x")).error, "bad_collected_until");
 });
+
+test("backup script and Worker export the same tables", async () => {
+  const { readFileSync } = await import("node:fs");
+  const py = readFileSync(new URL("../../scripts/backup_d1.py", import.meta.url), "utf8");
+  const listed = /^TABLES = \(([^)]*)\)/m.exec(py)[1].match(/"(\w+)"/g).map((s) => s.slice(1, -1));
+  const { EXPORT_TABLES } = await import("../src/validate.js");
+  assert.deepEqual([...listed].sort(), [...EXPORT_TABLES].sort());
+});
