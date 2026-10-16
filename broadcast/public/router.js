@@ -92,9 +92,15 @@ export async function render() {
         return render();
       }
     } else {
+      const quota = err?.message === "d1_quota_exceeded";
       mount(view, 
         h("h1", null, "読み込めませんでした"),
-        renderEmpty("データを取得できませんでした", "時間をおいてもう一度開いてください。続く場合は「状態」を確認してください。"),
+        quota
+          ? renderEmpty(
+              "データベースの無料枠の上限に達しています",
+              "Cloudflare アカウント全体の1日の読み取り上限です。日本時間の朝9時(UTC 0時)に自動で回復します。",
+            )
+          : renderEmpty("データを取得できませんでした", "時間をおいてもう一度開いてください。続く場合は「状態」を確認してください。"),
       );
       console.error(err);
     }
