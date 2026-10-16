@@ -63,7 +63,10 @@ export default {
     try {
       return await route(request, env, url);
     } catch (err) {
-      console.error(JSON.stringify({ message: "unhandled error", path: url.pathname, error: String(err?.message ?? err) }));
+      const message = String(err?.message ?? err);
+      console.error(JSON.stringify({ message: "unhandled error", path: url.pathname, error: message }));
+      // D1 の無料枠(アカウント全体で 1日の読み取り行数)を超えると、UTC 0時まで全クエリが失敗する。原因が分かるよう 503 で返す
+      if (/exceeded D1's free tier/i.test(message)) return json({ error: "d1_quota_exceeded" }, 503, { "retry-after": "3600" });
       return json({ error: "internal_error" }, 500);
     }
   },
