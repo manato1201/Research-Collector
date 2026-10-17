@@ -23,8 +23,8 @@
     "watch_new": 0
   },
   "weekly": {
-    "status": "error",
-    "run_at": "2026-10-12T09:00:55Z",
-    "error": "digest generation failed"
+    "status": "ok",
+    "run_at": "2026-10-17T23:58:44Z",
+    "chars": 21499
   }
 }
