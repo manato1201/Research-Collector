@@ -19,6 +19,7 @@
 //   GET  /api/prefs / PUT /api/prefs/{key}   設定(ウォッチワード・関連プロジェクト・非表示の収集元)
 //   GET  /api/sources       収集元ごとの件数(非表示の設定に使う)
 //   POST /api/board/bulk    ボードをまとめて更新(既読にする等。最大200件)
+//   POST /api/board/import  ボードの読み込み(書き出した JSON から。既定では既存の状態を変えない。最大500件)
 //   GET  /api/export?table=…&offset=…   バックアップ用の書き出し(Bearer のみ。ページごと)
 //   GET  /api/status        件数(URL単位)・カテゴリ別・直近の取り込み・失敗した収集元
 //   GET  /api/health        生存確認(認証なし。データは返さない)
@@ -46,6 +47,7 @@ import {
   PREF_KEYS,
   parseSearch,
   resolveCategories,
+  validateBoardImport,
   validateBoardInput,
   validateIngest,
   validatePref,
@@ -120,6 +122,10 @@ async function route(request, env, url) {
   if (pathname === "/api/board/bulk") {
     if (method !== "POST") return methodNotAllowed("POST");
     return withAuth(request, env, url, true, () => handleBoardBulk(request, env));
+  }
+  if (pathname === "/api/board/import") {
+    if (method !== "POST") return methodNotAllowed("POST");
+    return withAuth(request, env, url, true, () => handleBoardImport(request, env));
   }
 
   // バックアップ用の書き出しは、機械(Bearer)だけ。Cookie では許可しない
@@ -850,6 +856,50 @@ async function handleBoardBulk(request, env) {
   }
   await runInBatches(env.DB, statements);
   return json({ ok: true, state: v.state, count: hashes.length });
+}
+
+/**
+ * ボードの読み込み(書き出した JSON から戻す)。既定では、すでにボードにある記事の状態を変えない。
+ * overwrite: true のときだけ、既存の状態・メモを上書きする。
+ */
+async function handleBoardImport(request, env) {
+  const text = await readBodyLimited(request, 200_000);
+  if (text === null) return json({ error: "payload_too_large" }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const v = validateBoardImport(body);
+  if (!v.ok) return json({ error: v.error }, 400);
+
+  const existing = new Set();
+  for (let i = 0; i < v.items.length; i += 90) {
+    const chunk = v.items.slice(i, i + 90);
+    const rows = await env.DB.prepare(`SELECT url_hash FROM board WHERE url_hash IN (${chunk.map(() => "?").join(",")})`)
+      .bind(...chunk.map((it) => it.url_hash))
+      .all();
+    for (const r of rows.results) existing.add(r.url_hash);
+  }
+  const nowIso = new Date().toISOString();
+  const sql = v.overwrite
+    ? `INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT(url_hash) DO UPDATE SET state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`
+    : "INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(url_hash) DO NOTHING";
+  await runInBatches(
+    env.DB,
+    v.items.map((it) => env.DB.prepare(sql).bind(it.url_hash, it.state, it.note, nowIso)),
+  );
+  const conflicts = existing.size;
+  return json({
+    ok: true,
+    overwrite: v.overwrite,
+    received: v.items.length,
+    added: v.items.length - conflicts,
+    existing: conflicts,
+    updated: v.overwrite ? conflicts : 0,
+  });
 }
 
 // ------------------------------------------------------------------ ボード

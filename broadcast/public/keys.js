@@ -2,13 +2,15 @@
 //
 //   j / k   次・前の記事へ移動(フォーカス)   o / Enter  記事の詳細を開く
 //   x       既読 ⇄ 未読                        u          「既読を隠す」の切り替え
-//   /       検索へ                             g h / g r / g b / g s  放送 / ラジオ / ボード / 設定へ
+//   /       検索へ(Ctrl / ⌘ + K も)           g h / g r / g b / g s  放送 / ラジオ / ボード / 設定へ
+//   Space   ラジオの再生中: 一時停止 ⇄ 再開    , / .      ラジオの再生中: 前・次の章
 //   ?       この一覧を表示 / 閉じる            Esc        閉じる
 //
 // 入力欄・選択肢・ドロワーの中では、文字入力を妨げない(入力欄では何もしない。ドロワーは Esc だけ)。
 
 import { itemData, markAllRead, openDrawer, setBoard } from "./components.js";
 import { navigate } from "./router.js";
+import { jump, snapshot, toggle } from "./player.js";
 import { getHideRead, setHideRead, state } from "./store.js";
 import { toast } from "./util.js";
 
@@ -44,6 +46,13 @@ export function initKeys() {
   document.getElementById("help-open")?.addEventListener("click", () => toggleHelp(true));
 
   document.addEventListener("keydown", (ev) => {
+    // Ctrl / ⌘ + K: 検索(入力欄の中でも使える。ドロワーが開いているときは何もしない)
+    if ((ev.ctrlKey || ev.metaKey) && !ev.altKey && !ev.shiftKey && ev.key.toLowerCase() === "k") {
+      if (!document.getElementById("drawer").hidden) return;
+      ev.preventDefault();
+      document.getElementById("search-input")?.focus();
+      return;
+    }
     if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
     const help = document.getElementById("help");
     if (ev.key === "Escape" && help && !help.hidden) {
@@ -80,6 +89,20 @@ export function initKeys() {
       ev.preventDefault();
       document.getElementById("search-input")?.focus();
       return;
+    }
+    // ラジオの再生中だけ: Space = 一時停止 / 再開、, = 前の章、. = 次の章(ボタンにフォーカスがあるときの Space は、ボタンの動作に任せる)
+    if (snapshot().status !== "idle") {
+      const onControl = ev.target instanceof HTMLElement && ev.target.closest("button, a, summary, select, input");
+      if (k === " " && !onControl) {
+        ev.preventDefault();
+        toggle();
+        return;
+      }
+      if (k === "," || k === ".") {
+        ev.preventDefault();
+        jump(k === "." ? 1 : -1);
+        return;
+      }
     }
     if (k === "u") {
       const next = !getHideRead();

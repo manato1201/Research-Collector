@@ -1684,3 +1684,16 @@ body[data-offline="1"] .status-bar::after {
 .tabs-nav a {
   white-space: nowrap;
 }
+
+/* ---------- 出典・権利の注記(原文へのリンク) ---------- */
+.item-src {
+  font-size: 0.78rem;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.drawer-note {
+  margin: 0.25rem 0 0.75rem;
+  font-size: 0.78rem;
+  color: var(--muted);
+}

@@ -408,6 +408,40 @@ check("bulk rejects bad hashes and oversize requests",
       and call("POST", "/api/board/bulk", {"hashes": [f"{i:016x}" for i in range(201)], "state": "read"})[0] == 400)
 check("bulk requires auth", call("POST", "/api/board/bulk", {"hashes": [H1], "state": "read"}, token=None)[0] == 401)
 
+# --- 出典の種別・言語の絞り込み(件数が全体と合う)
+all_n = call("GET", "/api/articles?status=added&limit=1")[1]["total"]
+kind_total = sum(call("GET", f"/api/articles?status=added&kind={k}&limit=1")[1]["total"] for k in ("official", "article", "talk", "paper", "x", "other"))
+check("every article belongs to exactly one kind (counts add up)", kind_total == all_n and all_n > 0, (kind_total, all_n))
+ja_n = call("GET", "/api/articles?status=added&lang=ja&limit=1")[1]["total"]
+en_n = call("GET", "/api/articles?status=added&lang=en&limit=1")[1]["total"]
+check("lang ja + en add up to all", ja_n + en_n == all_n, (ja_n, en_n, all_n))
+kana = re.compile("[ぁ-ゟ゠-ヿ一-鿿]")
+ja_titles = [a["title"] for a in call("GET", "/api/articles?status=added&lang=ja&limit=100")[1]["articles"]]
+en_titles = [a["title"] for a in call("GET", "/api/articles?status=added&lang=en&limit=100")[1]["articles"]]
+check("lang=ja returns only titles with Japanese; lang=en none", all(kana.search(t) for t in ja_titles) and not any(kana.search(t) for t in en_titles), (ja_titles[:2], en_titles[:2]))
+check("bad kind / lang -> 400", call("GET", "/api/articles?kind=nope")[0] == 400 and call("GET", "/api/articles?lang=fr")[0] == 400)
+
+# --- ボードの読み込み(既定では既存の状態を変えない)
+IM1, IM2 = "a1a1a1a1a1a1a1a1", "b2b2b2b2b2b2b2b2"
+def im_state(h):
+    return next((i for i in call("GET", "/api/board")[1]["items"] if i["url_hash"] == h), None)
+s, r = call("POST", "/api/board/import", {"items": [{"url_hash": IM1, "state": "try", "note": "n1"}]})
+check("import adds a new item", s == 200 and r["added"] == 1 and r["existing"] == 0 and im_state(IM1)["state"] == "try", (s, r))
+s, r = call("POST", "/api/board/import", {"items": [{"url_hash": IM1, "state": "hold", "note": "changed"}, {"url_hash": IM2, "state": "read"}]})
+check("import never silently overwrites an existing item", s == 200 and r["added"] == 1 and r["existing"] == 1 and r["updated"] == 0
+      and im_state(IM1)["state"] == "try" and im_state(IM1)["note"] == "n1" and im_state(IM2)["state"] == "read", (s, r))
+s, r = call("POST", "/api/board/import", {"items": [{"url_hash": IM1, "state": "hold", "note": "changed"}], "overwrite": True})
+check("import with overwrite updates the existing item", s == 200 and r["updated"] == 1 and im_state(IM1)["state"] == "hold" and im_state(IM1)["note"] == "changed", (s, r))
+check("import rejects bad payloads (all or nothing)",
+      call("POST", "/api/board/import", {"items": [{"url_hash": IM2, "state": "done"}]})[0] == 400
+      and call("POST", "/api/board/import", {"items": [{"url_hash": "x", "state": "try"}]})[0] == 400
+      and call("POST", "/api/board/import", {"items": []})[0] == 400
+      and call("POST", "/api/board/import", {"items": [{"url_hash": f"{i:016x}", "state": "try"} for i in range(501)]})[0] == 400)
+check("import requires auth", call("POST", "/api/board/import", {"items": [{"url_hash": IM1, "state": "try"}]}, token=None)[0] == 401)
+call("DELETE", f"/api/board/{IM1}"); call("DELETE", f"/api/board/{IM2}")
+check("import test rows cleaned up", im_state(IM1) is None and im_state(IM2) is None)
+
+
 s, r = call("GET", "/api/export?table=articles&offset=0&limit=5")
 check("export returns a page with a next offset", s == 200 and r["count"] == 5 and r["next"] == 5 and "url_hash" in r["rows"][0], (s, str(r)[:150]))
 tot, off, pages = 0, 0, 0

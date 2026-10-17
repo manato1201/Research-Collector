@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { resolveCategories, buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
+import { BOARD_IMPORT_MAX, SOURCE_KINDS, validateBoardImport, resolveCategories, buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
 
 const good = () => ({
   url_hash: "0123456789abcdef",
@@ -313,4 +313,35 @@ test("backup script and Worker export the same tables", async () => {
   const listed = /^TABLES = \(([^)]*)\)/m.exec(py)[1].match(/"(\w+)"/g).map((s) => s.slice(1, -1));
   const { EXPORT_TABLES } = await import("../src/validate.js");
   assert.deepEqual([...listed].sort(), [...EXPORT_TABLES].sort());
+});
+
+test("buildArticleQuery: kind and lang filters", () => {
+  const q = buildArticleQuery(new URLSearchParams("kind=paper&lang=ja"));
+  assert.ok(q.ok);
+  assert.ok(q.where.includes("source_type IN (?,?)") && q.where.includes("GLOB"));
+  assert.deepEqual(q.params, SOURCE_KINDS.paper);
+  const en = buildArticleQuery(new URLSearchParams("lang=en"));
+  assert.ok(en.where.includes("NOT GLOB"));
+  const other = buildArticleQuery(new URLSearchParams("kind=other"));
+  assert.ok(other.where.includes("source_type NOT IN") && other.params.length === Object.values(SOURCE_KINDS).flat().length);
+  assert.equal(buildArticleQuery(new URLSearchParams("kind=nope")).error, "bad_kind");
+  assert.equal(buildArticleQuery(new URLSearchParams("kind=constructor")).error, "bad_kind");
+  assert.equal(buildArticleQuery(new URLSearchParams("lang=fr")).error, "bad_lang");
+});
+
+test("validateBoardImport: shape, duplicates, limits, overwrite flag", () => {
+  const item = (i, over = {}) => ({ url_hash: String(i).padStart(16, "0"), state: "try", note: "", ...over });
+  const ok = validateBoardImport({ items: [item(1), item(1, { state: "hold" }), item(2, { note: "メモ" })] });
+  assert.ok(ok.ok);
+  assert.equal(ok.items.length, 2); // 同じ記事は最初の1件だけ
+  assert.equal(ok.overwrite, false);
+  assert.equal(validateBoardImport({ items: [item(1)], overwrite: true }).overwrite, true);
+  assert.equal(validateBoardImport({ items: [item(1)], overwrite: "yes" }).overwrite, false);
+  assert.equal(validateBoardImport({ items: [] }).error, "bad_items");
+  assert.equal(validateBoardImport({ items: Array.from({ length: BOARD_IMPORT_MAX + 1 }, (_, i) => item(i)) }).error, "bad_items");
+  assert.equal(validateBoardImport({ items: [item(1, { state: "done" })] }).error, "bad_state");
+  assert.equal(validateBoardImport({ items: [item(1, { state: "unread" })] }).error, "bad_state");
+  assert.equal(validateBoardImport({ items: [{ url_hash: "xyz", state: "try" }] }).error, "bad_hash");
+  assert.equal(validateBoardImport({ items: [item(1, { note: "x".repeat(201) })] }).error, "bad_note");
+  assert.equal(validateBoardImport(null).error, "body_must_be_an_object");
 });

@@ -8,7 +8,7 @@
 //  - ログアウトしたら、保存した API の応答(記事・ボード等)を消す(ページから "clear" を受け取る)。
 //  - 保存するのは、この端末のブラウザの中だけ。
 
-const CACHE = "rb-v1";
+const CACHE = "rb-v2";
 const SHELL = [
   "/",
   "/index.html",
