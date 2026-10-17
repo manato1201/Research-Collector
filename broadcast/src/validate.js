@@ -270,6 +270,15 @@ export function validateIngest(body, categories = CATEGORIES) {
  * GET /api/articles のクエリを、SQLと束縛値にする。
  * @returns {{ok: false, error: string} | {ok: true, where: string, params: any[], limit: number, offset: number}}
  */
+// 出典の種別(source_type のまとまり)。サイトの「種別」の絞り込みと、検証に使う
+export const SOURCE_KINDS = {
+  official: ["unity", "unreal", "houdini", "cloudflare", "model"],
+  article: ["zenn", "qiita"],
+  talk: ["cedec", "gdc"],
+  paper: ["paper", "arxiv"],
+  x: ["x_post"],
+};
+
 export function buildArticleQuery(searchParams, categories = CATEGORIES) {
   const clauses = [];
   const params = [];
@@ -334,6 +343,28 @@ export function buildArticleQuery(searchParams, categories = CATEGORIES) {
   }
 
   if (searchParams.get("review") === "1") clauses.push("review = 1");
+
+  // kind: 出典の種別(SOURCE_KINDS)。other は、どの種別にも入らないもの(ローカル限定の追加分など)
+  const kind = searchParams.get("kind");
+  if (kind !== null) {
+    if (kind === "other") {
+      const known = Object.values(SOURCE_KINDS).flat();
+      clauses.push(`source_type NOT IN (${known.map(() => "?").join(",")})`);
+      params.push(...known);
+    } else if (Object.hasOwn(SOURCE_KINDS, kind)) {
+      clauses.push(`source_type IN (${SOURCE_KINDS[kind].map(() => "?").join(",")})`);
+      params.push(...SOURCE_KINDS[kind]);
+    } else {
+      return { ok: false, error: "bad_kind" };
+    }
+  }
+
+  // lang: ja = 題名に日本語(かな・漢字)を含む / en = 含まない。言語は保存していないので、題名から判定する
+  const lang = searchParams.get("lang");
+  if (lang !== null) {
+    if (!["ja", "en"].includes(lang)) return { ok: false, error: "bad_lang" };
+    clauses.push(`title ${lang === "ja" ? "" : "NOT "}GLOB '*[ぁ-ゟ゠-ヿ一-鿿]*'`);
+  }
 
   // order: published(既定。公開日の新しい順)/ collected(収集した順。追加カテゴリの「最近入ったもの」向け)
   const orderParam = searchParams.get("order") ?? "published";
@@ -520,6 +551,30 @@ export function validateBoardInput(body) {
   const note = body.note ?? "";
   if (typeof note !== "string" || note.length > 200) return { ok: false, error: "bad_note" };
   return { ok: true, state, note };
+}
+
+/**
+ * POST /api/board/import の本文。{ items: [{url_hash, state, note?}], overwrite?: boolean }
+ * 1件でも不正なら全体を拒否する(一部だけ入って気づけない状態を避ける)。
+ */
+export const BOARD_IMPORT_MAX = 500;
+export function validateBoardImport(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "body_must_be_an_object" };
+  if (!Array.isArray(body.items) || body.items.length === 0 || body.items.length > BOARD_IMPORT_MAX) {
+    return { ok: false, error: "bad_items" };
+  }
+  const seen = new Set();
+  const items = [];
+  for (const it of body.items) {
+    if (it === null || typeof it !== "object" || !isUrlHash(it.url_hash)) return { ok: false, error: "bad_hash" };
+    if (!BOARD_STATES.includes(it.state)) return { ok: false, error: "bad_state" };
+    const note = it.note ?? "";
+    if (typeof note !== "string" || note.length > 200) return { ok: false, error: "bad_note" };
+    if (seen.has(it.url_hash)) continue;
+    seen.add(it.url_hash);
+    items.push({ url_hash: it.url_hash, state: it.state, note });
+  }
+  return { ok: true, items, overwrite: body.overwrite === true };
 }
 
 export function isUrlHash(v) {

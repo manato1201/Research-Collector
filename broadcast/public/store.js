@@ -15,6 +15,19 @@ export let EXTRA = []; // [{id, label}]
 export const allCategoryIds = () => [...CATEGORIES, ...EXTRA.map((e) => e.id)];
 
 export const BOARD_LABELS = { reading: "読む", try: "試す", hold: "保留", read: "既読" };
+// 絞り込みの属性(サーバーの SOURCE_KINDS と、題名の言語判定に対応する)
+export const KIND_LABELS = [
+  ["official", "公式・更新情報"],
+  ["article", "技術記事"],
+  ["talk", "講演資料"],
+  ["paper", "論文"],
+  ["x", "X 投稿"],
+  ["other", "その他"],
+];
+export const LANG_LABELS = [
+  ["ja", "日本語"],
+  ["en", "English"],
+];
 export const BOARD_ORDER = ["reading", "try", "hold"]; // ボードのページの列(「既読」は列にしない)
 export const DRAWER_STATES = ["unread", ...BOARD_ORDER, "read"];
 export const STALE_HOURS = 20; // 12時間おきの実行。これを超えて取り込みが無ければ「止まっている可能性」と出す

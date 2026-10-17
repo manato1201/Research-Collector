@@ -2,7 +2,7 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { addDays, crumbs, fadeIn, h, jstToday, mount, pageNotFound, renderEmpty, renderSkeleton, weekStart, ymd } from "./util.js";
-import { AuthError, EXTRA, allCategoryIds, api, catLabel, dot, excludeParam, loadBoard } from "./store.js";
+import { AuthError, EXTRA, KIND_LABELS, LANG_LABELS, allCategoryIds, api, catLabel, dot, excludeParam, loadBoard } from "./store.js";
 import { itemsToChapters, markAllRead, readButton, renderItem, sourceChips } from "./components.js";
 import { navigate } from "./router.js";
 
@@ -27,6 +27,8 @@ export async function pageCategory(view, cat, params) {
   const period = PERIODS.some(([k]) => k === params.get("p")) ? params.get("p") : "week";
   const source = params.get("s");
   const onlyReview = params.get("r") === "1";
+  const kind = KIND_LABELS.some(([k]) => k === params.get("k")) ? params.get("k") : null;
+  const lang = LANG_LABELS.some(([k]) => k === params.get("l")) ? params.get("l") : null;
 
   const today = jstToday();
   let since;
@@ -40,7 +42,7 @@ export async function pageCategory(view, cat, params) {
   // 追加カテゴリは論文が中心で、公開日が古いものも「最近集めた」として見たいので、収集した日で絞る
   const byCollected = EXTRA.some((e) => e.id === cat);
   const [fromKey, toKey] = byCollected ? ["collected_since", "collected_until"] : ["since", "until"];
-  const q = `category=${cat}&status=added&${fromKey}=${since}${until ? `&${toKey}=${until}` : ""}${byCollected ? "&order=collected" : ""}${excludeParam()}&limit=200`;
+  const q = `category=${cat}&status=added&${fromKey}=${since}${until ? `&${toKey}=${until}` : ""}${byCollected ? "&order=collected" : ""}${excludeParam()}${kind ? `&kind=${kind}` : ""}${lang ? `&lang=${lang}` : ""}&limit=200`;
   const [res, headlineRes] = await Promise.all([
     api(`/api/articles?${q}`),
     api(`/api/episodes?kind=daily&date=latest&category=${cat}`).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),
@@ -54,7 +56,13 @@ export async function pageCategory(view, cat, params) {
   const sources = [...sourceCount].map(([platform, count]) => ({ platform, count })).sort((a, b) => b.count - a.count);
 
   const go = (patch) => {
-    const qs = new URLSearchParams({ p: period, ...(source ? { s: source } : {}), ...(onlyReview ? { r: "1" } : {}) });
+    const qs = new URLSearchParams({
+      p: period,
+      ...(source ? { s: source } : {}),
+      ...(onlyReview ? { r: "1" } : {}),
+      ...(kind ? { k: kind } : {}),
+      ...(lang ? { l: lang } : {}),
+    });
     for (const [k, v] of Object.entries(patch)) (v === null ? qs.delete(k) : qs.set(k, v));
     navigate(`/c/${cat}?${qs}`);
   };
@@ -80,9 +88,30 @@ export async function pageCategory(view, cat, params) {
     "表示中をすべて既読に",
   );
 
+  // 出典の種別・言語での絞り込み(サーバー側で絞るので、件数は /api/articles と一致する)
+  const mkChip = (label, on, fn) => h("button", { class: "chip", type: "button", "aria-pressed": String(on), onclick: fn }, label);
+  const attrRow = (label, pairs, current, key) =>
+    h(
+      "div",
+      { class: "row-controls", role: "group", "aria-label": label },
+      mkChip(`${label}: すべて`, current === null, () => go({ [key]: null })),
+      ...pairs.map(([id, text]) => mkChip(text, current === id, () => go({ [key]: id }))),
+    );
+  const filtered = Boolean(kind || lang || source || onlyReview);
+  const resetBtn = h(
+    "button",
+    { class: "btn", type: "button", onclick: () => navigate(`/c/${cat}?p=${period}`) },
+    "条件をリセット",
+  );
+
   const list = shown.length
     ? h("ul", { class: "list" }, ...shown.map((a) => renderItem(a)))
-    : renderEmpty("該当する記事がありません", "期間や絞り込みを変えてみてください。");
+    : h(
+        "div",
+        null,
+        renderEmpty("該当する記事がありません", "期間や絞り込みを変えてみてください。"),
+        filtered ? h("p", null, resetBtn) : null,
+      );
 
   mount(view, 
     crumbs(h("a", { href: "/", "data-link": "" }, "放送"), catLabel(cat)),
@@ -93,7 +122,9 @@ export async function pageCategory(view, cat, params) {
     h(
       "div",
       { class: "sticky-controls" },
-      h("div", { class: "row-controls" }, seg, reviewChip, readThis, markRead),
+      h("div", { class: "row-controls" }, seg, reviewChip, readThis, markRead, filtered ? resetBtn : null),
+      attrRow("種別", KIND_LABELS, kind, "k"),
+      attrRow("言語", LANG_LABELS, lang, "l"),
       sourceChips(sources, source, (key) => go({ s: key })),
     ),
     list,
