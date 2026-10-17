@@ -88,3 +88,9 @@
 - スクロールスパイ・スティッキー: `index.html` のナビ。今いるセクションのリンクだけを丸いピルにする。
 - フェードイン: 構成図・収集元の表。見えたときに1回だけ。
 - 動きの数: トップは「読み込みのフェード + カウントアップ」、説明部分は「スクロールスパイ + フェードイン」で、各画面2種類以内。全て `prefers-reduced-motion` で止まることを確認した。
+
+---
+
+## TakayuStudio 系リファレンスの追補(2026-10-15)
+
+TakayuStudio 系リファレンス(Prompt Shelf の出典・権利の扱い、出典種別のフィルタ、お気に入りの書き出し)の反映案は、[ResearchBroadcast_DESIGN.md](ResearchBroadcast_DESIGN.md) の同名の節にまとめた。型の定義は [REFERENCE_TAKAYUSTUDIO_2026-10.md](../REFERENCE_TAKAYUSTUDIO_2026-10.md)。

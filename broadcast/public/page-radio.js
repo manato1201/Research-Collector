@@ -163,9 +163,11 @@ export async function pageRadio(view, params) {
 
   const eq = h("div", { class: "eq", "aria-hidden": "true" }, ...Array.from({ length: 7 }, () => h("span")));
 
+  // 動きを減らす設定のときは、音声と動きに頼らず読めるように、原稿を最初から開く
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
   const script = h(
     "details",
-    { class: "acc" },
+    { class: "acc", open: reducedMotion },
     h("summary", null, "番組の原稿を読む"),
     h(
       "div",
@@ -199,6 +201,7 @@ export async function pageRadio(view, params) {
       : h("p", { class: "tool-note" }, "このブラウザは読み上げに対応していないため、再生できません。原稿は下で読めます。"),
     h("h2", { class: "guide-title" }, "番組表"),
     guide,
+    reducedMotion ? h("p", { class: "fig-note" }, "動きを減らす設定のため、番組の原稿を開いています。音声を使わずに、原稿だけで読めます。") : null,
     script,
     h(
       "p",

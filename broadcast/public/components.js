@@ -37,6 +37,26 @@ export function renderItem(a, { showCategoryBadge = true } = {}) {
     meta.append(h("span", { class: "badge project", title: "設定した関連プロジェクトのキーワードに当てはまります" }, `# ${name}`));
   }
 
+  // 出典と権利: どの記事にも、原文へのリンクを必ず付ける(要約・解説は原文ではない)
+  if (/^https?:\/\//i.test(a.url ?? "")) {
+    meta.append(
+      h(
+        "a",
+        {
+          class: "item-src",
+          href: a.url,
+          target: "_blank",
+          rel: "noopener noreferrer",
+          title: "原文を開きます(記事の権利は発行元に帰属します)",
+          onclick: () => {
+            if (!state.board.has(a.url_hash)) markQuietly(a, null);
+          },
+        },
+        "原文へ",
+      ),
+    );
+  }
+
   const li = h(
     "li",
     { class: `item${board?.state === "read" ? " is-read" : ""}`, dataset: { hash: a.url_hash } },
@@ -108,7 +128,14 @@ export function buildDrawerBody(a) {
   if (a.keywords?.length) row("キーワード", a.keywords.join(" / "));
   if (a.review) row("確認", h("span", { class: "badge warn" }, "分類に自信がありません(要確認)"));
 
-  const sum = a.summary ? h("p", { class: "drawer-sum" }, a.summary) : null;
+  const sum = a.summary
+    ? h(
+        "div",
+        null,
+        h("p", { class: "drawer-sum" }, a.summary),
+        h("p", { class: "drawer-note" }, "要約は、配信元のフィードの一部で、原文ではありません。内容は、原文で確認してください。"),
+      )
+    : null;
   const open = h(
     "a",
     {
@@ -121,7 +148,7 @@ export function buildDrawerBody(a) {
         if (!state.board.has(a.url_hash)) markQuietly(a, refresh);
       },
     },
-    "記事を開く",
+    "原文を開く",
   );
 
   const stateBox = h("div", { class: "board-state", role: "group", "aria-label": "ボードに入れる" });

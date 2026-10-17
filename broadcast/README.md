@@ -129,7 +129,7 @@ Content-Type: application/json
 | メソッド・パス | 認証 | 内容 |
 | --- | --- | --- |
 | `POST /api/ingest` | Bearer のみ | 取り込み。保持期間(既定90日)を過ぎた記事・日次 episode も、ここで削除する(記事に紐づく AI の解説も一緒に消える。ボードのメモは残す) |
-| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD` / `collected_until=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
+| `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD` / `collected_until=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `kind`(出典の種別: `official` `article` `talk` `paper` `x` `other`)/ `lang`(`ja` `en`。題名に日本語を含むか)/ `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
 | `GET /api/episodes` | 同上 | `kind=daily\|weekly` / `date=latest\|YYYY-MM-DD\|YYYY-Www` / `category=all\|<カテゴリ>` |
 | `GET /api/episodes/dates` | 同上 | episode のある日付(最大60) |
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
@@ -142,6 +142,7 @@ Content-Type: application/json
 | `GET /api/prefs` / `PUT /api/prefs/{key}` | 同上(書き込みは Cookie のとき Origin も検査) | 設定。`watchwords`(10個まで)/ `projects`(関連プロジェクト。12個まで)/ `muted_sources`(非表示の収集元) |
 | `GET /api/sources` | 同上 | 収集元ごとの件数(非表示の設定に使う) |
 | `POST /api/board/bulk` | 同上 | `{"hashes":[…200件まで],"state":"read"}`。まとめて既読。**「読む / 試す / 保留」の記事は上書きしない** |
+| `POST /api/board/import` | 同上 | `{"items":[{"url_hash","state","note"}…500件まで],"overwrite":false}`。書き出した JSON から戻す。**既定では、すでにボードにある記事を変えない**。`overwrite:true` のときだけ上書き。1件でも不正なら全体を拒否する |
 | `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブル(articles・episodes・reports・board・watch・prefs・meta・insights)を1回200行までページで返す(`scripts/backup_d1.py` が使う) |
 | `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
