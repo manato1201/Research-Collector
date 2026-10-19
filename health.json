@@ -1,18 +1,18 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-19T09:07:28Z",
-    "collected": 120,
-    "new": 10,
-    "notebooklm_ok": 8,
+    "run_at": "2026-10-19T21:07:01Z",
+    "collected": 121,
+    "new": 6,
+    "notebooklm_ok": 9,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 88,
     "unclassified": 0,
-    "merged": 5,
+    "merged": 0,
     "by_source": {
-      "Zenn/Qiita": 49,
+      "Zenn/Qiita": 50,
       "Unity/UE": 10,
       "CEDEC": 25,
       "Papers": 23,
@@ -38,7 +38,7 @@
         "error": "rate limited (HTTP 429): 6 queries skipped"
       }
     ],
-    "watch_new": 0
+    "watch_new": 2
   },
   "weekly": {
     "status": "ok",
