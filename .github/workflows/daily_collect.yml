@@ -83,7 +83,7 @@ jobs:
         env:
           BROADCAST_INGEST_URL: ${{ secrets.BROADCAST_INGEST_URL }}
           BROADCAST_INGEST_TOKEN: ${{ secrets.BROADCAST_INGEST_TOKEN }}
-        run: python scripts/enrich.py --rounds 3
+        run: python scripts/enrich.py --rounds 6
 
       # 放送が出たこと(新着の要約)をスマホへ通知する。任意の工程: NTFY_TOPIC / SLACK_WEBHOOK_URL が無ければ何もしない。
       - name: Notify new articles (optional)

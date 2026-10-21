@@ -135,8 +135,8 @@ Content-Type: application/json
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
 | `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
 | `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
-| `POST /api/enrich?limit=` | **Bearer のみ** | 解説(これは何か / 何ができるか / どう応用できるか)を、Workers AI(無料枠)で作って保存する。解説の無い、要約が40字以上ある記事を、新しい順に最大8件。`scripts/enrich.py`(日次ワークフロー)が呼ぶ |
-| `GET /api/insights?hashes=` | 同上 | 記事の解説(最大60件)。AI が書いたもの(`source: "ai"`)。無ければ、出典の種類ごとの定型の解説(`source: "rule"`) |
+| `POST /api/enrich?limit=` | **Bearer のみ** | 解説を、Workers AI(無料枠)で作って保存する。解説の無い(または旧版の)記事を、新しい順に最大8件。要約が十分にある記事は**初心者向けの解説**(日本語の見出し `title_ja`・かんたんな概要 `what`・分かること `use`・応用 `apply`・用語と説明 `term` / `term_meaning`)、要約が無い英語の記事は**日本語の見出しだけ**(`source: "title"`)。結果は `ok` / `titled` / `unusable` / `errors` / `pending` で返す |
+| `GET /api/insights?hashes=` | 同上 | 記事の解説(最大60件)。AI が書いたもの(`source: "ai"`。`title_ja`・`term` を含む)。無ければ、出典の種類ごとの定型の解説(`source: "rule"`。日本語の見出しだけ付いていれば `title_ja` も返す) |
 | `GET /api/search?q=` | 同上 | 記事の検索。空白区切りはAND。3文字以上の語は全文検索(FTS5 trigram。日本語も部分一致)、短い語は LIKE |
 | `GET /api/watchwords` | 同上 | ウォッチワードごとの、直近7日(収集した日)の件数と新着3件 |
 | `GET /api/prefs` / `PUT /api/prefs/{key}` | 同上(書き込みは Cookie のとき Origin も検査) | 設定。`watchwords`(10個まで)/ `projects`(関連プロジェクト。12個まで)/ `muted_sources`(非表示の収集元) |

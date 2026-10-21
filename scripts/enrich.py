@@ -41,16 +41,16 @@ def call(url: str, token: str, timeout: int = 120) -> dict:
 
 def run(url: str, token: str, rounds: int, limit: int, post=call) -> dict:
     """解説が無い記事が無くなる・上限の回数・生成が続けて失敗する、のいずれかまで繰り返す。集計を返す。"""
-    total = {"processed": 0, "ok": 0, "unusable": 0, "errors": 0, "pending": None, "rounds": 0}
+    total = {"processed": 0, "ok": 0, "titled": 0, "unusable": 0, "errors": 0, "pending": None, "rounds": 0}
     for _ in range(rounds):
         r = post(enrich_url(url, limit), token)
         total["rounds"] += 1
-        for k in ("processed", "ok", "unusable", "errors"):
+        for k in ("processed", "ok", "titled", "unusable", "errors"):
             total[k] += int(r.get(k, 0))
         total["pending"] = r.get("pending")
         if r.get("processed", 0) == 0 or r.get("pending", 0) == 0:
             break
-        if r.get("ok", 0) == 0 and r.get("errors", 0) > 0:
+        if r.get("ok", 0) + r.get("titled", 0) == 0 and r.get("errors", 0) > 0:
             break  # AI が使えない状態。枠と時間を使い続けない
     return total
 
@@ -80,7 +80,7 @@ def main(argv=None) -> int:
         logger.error(f"enrich failed: {e}")
         return 1
     logger.info(
-        f"enrich: {t['ok']} written, {t['unusable']} unusable, {t['errors']} errors "
+        f"enrich: {t['ok']} written, {t['titled']} titled, {t['unusable']} unusable, {t['errors']} errors "
         f"in {t['rounds']} round(s); {t['pending']} still pending"
     )
     return 0

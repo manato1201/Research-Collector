@@ -6,7 +6,7 @@ import { buildRadioProgram, firstSentence } from "../public/radio-script.js";
 
 const art = (i, over = {}) => ({
   url_hash: String(i).padStart(16, "0"),
-  title: `Article ${i}: Added a toggle to cook options`,
+  title: `記事${i}: 調理オプションの切り替えを追加`,
   summary: "Added a toggle to the cook options so that editing does not recompile the asset every time.",
   platform: "sidefx_changelog",
   ...over,
@@ -27,9 +27,9 @@ test("an item that belongs to two categories is read in the first corner only", 
   });
   const g = p.corners.find((c) => c.id === "game_dev_tech").text;
   const r = p.corners.find((c) => c.id === "graphics_research").text;
-  assert.ok(g.includes("Article 1:"));
-  assert.ok(!r.includes("Article 1:"), "the shared article must not be read twice");
-  assert.ok(r.includes("Article 4:"));
+  assert.ok(g.includes("記事1:"));
+  assert.ok(!r.includes("記事1:"), "the shared article must not be read twice");
+  assert.ok(r.includes("記事4:"));
 });
 
 test("a corner whose items were all read earlier is dropped", () => {
@@ -85,7 +85,7 @@ test("items with an AI insight are read before those without", () => {
     perCorner: 2,
   });
   const g = p.corners.find((c) => c.id === "game_dev_tech").text;
-  assert.ok(g.indexOf("要点の解説です") >= 0 && g.indexOf("要点の解説です") < g.indexOf("Article 1:"), g);
+  assert.ok(g.indexOf("要点の解説です") >= 0 && g.indexOf("要点の解説です") < g.indexOf("記事1:"), g);
 });
 
 test("firstSentence does not cut in the middle of an English word", () => {

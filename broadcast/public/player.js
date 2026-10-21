@@ -9,6 +9,7 @@
 
 import { splitChunks } from "./radio-script.js";
 import { jingle } from "./sfx.js";
+import { isHighQuality, pickBestVoice, rankVoices, voiceLabel } from "./voice.js";
 
 const synth = "speechSynthesis" in window ? window.speechSynthesis : null;
 export const supported = Boolean(synth);
@@ -72,13 +73,9 @@ export function onChange(fn) {
   return () => listeners.delete(fn);
 }
 
+// 声は、ユーザーが選んだものがあればそれ。無ければ「おまかせ」(いちばん自然そうな日本語の声。voice.js)
 function pickVoice() {
-  const voices = synth.getVoices();
-  return (
-    voices.find((v) => v.name === voiceName) ??
-    voices.find((v) => v.lang?.toLowerCase().startsWith("ja")) ??
-    null
-  );
+  return pickBestVoice(synth.getVoices(), voiceName);
 }
 
 function finish() {
@@ -254,7 +251,7 @@ export function setSfx(on) {
 /** 日本語の声の一覧(端末にある分)。 */
 export function japaneseVoices() {
   if (!supported) return [];
-  return synth.getVoices().filter((v) => v.lang?.toLowerCase().startsWith("ja"));
+  return rankVoices(synth.getVoices());
 }
 
 // ------------------------------------------------------------------ 再生バー(DOM は index.html にある)
@@ -289,12 +286,12 @@ export function initPlayerUI() {
     voiceSel.replaceChildren();
     const auto = document.createElement("option");
     auto.value = "";
-    auto.textContent = ja.length ? "声: 自動" : "声: 端末の既定";
+    auto.textContent = ja.length ? `声: おまかせ(${ja[0].name}${isHighQuality(ja[0]) ? " ★" : ""})` : "声: 端末の既定";
     voiceSel.append(auto);
     for (const v of ja) {
       const o = document.createElement("option");
       o.value = v.name;
-      o.textContent = v.name;
+      o.textContent = voiceLabel(v);
       voiceSel.append(o);
     }
     voiceSel.value = ja.some((v) => v.name === voiceName) ? voiceName : "";
