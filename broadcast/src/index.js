@@ -25,7 +25,18 @@
 //   GET  /api/health        生存確認(認証なし。データは返さない)
 // それ以外は静的アセット(public/。サイトの本体)。サイト自体にデータは入っていない。
 
-import { buildMessages, extractText, fallbackInsight, MIN_SUMMARY_CHARS, parseInsight } from "./insights.js";
+import {
+  buildMessages,
+  buildTitleMessages,
+  extractText,
+  fallbackInsight,
+  hasBasis,
+  INSIGHT_VERSION,
+  MIN_SUMMARY_CHARS,
+  parseInsight,
+  parseTitle,
+  titleIsFaithful,
+} from "./insights.js";
 import {
   parseCookie,
   SESSION_COOKIE,
@@ -627,12 +638,21 @@ async function handleWatch(env) {
 
 const DEFAULT_INSIGHT_MODEL = "@cf/qwen/qwen3-30b-a3b-fp8";
 
+// 解説が無い(または版が古い)記事。要約が十分にあるか、題名が日本語でない(日本語の見出しを付けられる)ものだけ
 const PENDING_SQL = `
   FROM articles a LEFT JOIN insights i ON i.url_hash = a.url_hash
-  WHERE a.status = 'added' AND i.url_hash IS NULL AND length(COALESCE(a.summary, '')) >= ?`;
+  WHERE a.status = 'added' AND (i.url_hash IS NULL OR i.ver < ?)
+    AND (length(COALESCE(a.summary, '')) >= ? OR a.title NOT GLOB '*[ぁ-ゟ゠-ヿ一-鿿]*')`;
+const PENDING_BINDS = [INSIGHT_VERSION, MIN_SUMMARY_CHARS];
+
+const INSERT_INSIGHT_SQL = `
+  INSERT OR REPLACE INTO insights (url_hash, what, use, apply, title_ja, term, term_meaning, source, model, created_at, ver)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 /**
- * 解説が無い記事(要約が十分にあるもの)を、新しい順に最大 limit 件、AI で作って保存する。
+ * 解説が無い(または古い版の)記事を、新しい順に最大 limit 件、AI で作って保存する。
+ * - 要約が十分にある記事: 初心者向けの解説(日本語の見出し・かんたんな概要・何が分かるか・応用・用語)。source = 'ai'
+ * - 要約が無い英語の記事: 日本語の見出しだけ(題名の翻訳なので、作り話になりにくい)。source = 'title'
  * - 一時的な失敗(API エラー)は、行を作らない(次回また試す)。
  * - 出力が使えない形だったものは、source = 'none' で残し、再試行しない(同じ記事に枠を使い続けない)。
  */
@@ -640,49 +660,63 @@ async function handleEnrich(env, url) {
   if (!env.AI) return json({ error: "ai_not_configured" }, 503);
   const limit = Math.min(8, Math.max(1, Number(url.searchParams.get("limit")) || 5));
   const model = env.INSIGHT_MODEL || DEFAULT_INSIGHT_MODEL;
+  const noThink = model.includes("qwen3");
   const { projects } = await readPrefs(env);
 
   const rows = await env.DB.prepare(`SELECT a.* ${PENDING_SQL} ORDER BY a.collected_at DESC LIMIT ?`)
-    .bind(MIN_SUMMARY_CHARS, limit)
+    .bind(...PENDING_BINDS, limit)
     .all();
 
   let ok = 0;
+  let titled = 0;
   let unusable = 0;
   let errors = 0;
   const nowIso = new Date().toISOString();
   for (const row of rows.results) {
     const article = rowToArticle(row);
-    let parsed;
+    const full = hasBasis(article);
+    let text;
     try {
       const result = await env.AI.run(model, {
-        messages: buildMessages(article, { projects, noThink: model.includes("qwen3") }),
-        max_tokens: 600,
+        messages: full ? buildMessages(article, { projects, noThink }) : buildTitleMessages(article, { noThink }),
+        max_tokens: full ? 700 : 120,
         temperature: 0.3,
       });
-      parsed = parseInsight(extractText(result));
+      text = extractText(result);
     } catch (err) {
       errors++;
       console.error(JSON.stringify({ message: "ai failed", error: String(err?.message ?? err).slice(0, 200) }));
       continue;
     }
-    if (parsed) {
-      await env.DB.prepare(
-        "INSERT OR REPLACE INTO insights (url_hash, what, use, apply, source, model, created_at) VALUES (?, ?, ?, ?, 'ai', ?, ?)",
-      )
-        .bind(article.url_hash, parsed.what, parsed.use, parsed.apply, model, nowIso)
-        .run();
-      ok++;
+    const h = article.url_hash;
+    if (full) {
+      const parsed = parseInsight(text);
+      if (parsed) {
+        // 見出しが元の題名の綴りを崩していたら、見出しだけ捨てる(解説の本文は使う)
+        if (parsed.title_ja && !titleIsFaithful(parsed.title_ja, article.title)) parsed.title_ja = null;
+        await env.DB.prepare(INSERT_INSIGHT_SQL)
+          .bind(h, parsed.what, parsed.use, parsed.apply, parsed.title_ja, parsed.term, parsed.term_meaning, "ai", model, nowIso, INSIGHT_VERSION)
+          .run();
+        ok++;
+        continue;
+      }
     } else {
-      await env.DB.prepare(
-        "INSERT OR REPLACE INTO insights (url_hash, source, model, created_at) VALUES (?, 'none', ?, ?)",
-      )
-        .bind(article.url_hash, model, nowIso)
-        .run();
-      unusable++;
+      const titleJa = parseTitle(text);
+      if (titleJa && titleIsFaithful(titleJa, article.title)) {
+        await env.DB.prepare(INSERT_INSIGHT_SQL)
+          .bind(h, null, null, null, titleJa, null, null, "title", model, nowIso, INSIGHT_VERSION)
+          .run();
+        titled++;
+        continue;
+      }
     }
+    await env.DB.prepare(INSERT_INSIGHT_SQL)
+      .bind(h, null, null, null, null, null, null, "none", model, nowIso, INSIGHT_VERSION)
+      .run();
+    unusable++;
   }
-  const pending = await env.DB.prepare(`SELECT COUNT(*) AS n ${PENDING_SQL}`).bind(MIN_SUMMARY_CHARS).first();
-  return json({ processed: rows.results.length, ok, unusable, errors, pending: pending?.n ?? 0, model });
+  const pending = await env.DB.prepare(`SELECT COUNT(*) AS n ${PENDING_SQL}`).bind(...PENDING_BINDS).first();
+  return json({ processed: rows.results.length, ok, titled, unusable, errors, pending: pending?.n ?? 0, model });
 }
 
 /** 記事の解説。AI が書いたものがあればそれ、無ければ、出典の種類ごとの定型の解説(source = "rule")。 */
@@ -690,7 +724,8 @@ async function handleInsights(url, env) {
   const hashes = [...new Set((url.searchParams.get("hashes") ?? "").split(",").map((h) => h.trim()).filter(isUrlHash))].slice(0, 60);
   if (!hashes.length) return json({ insights: {} });
   const rows = await env.DB.prepare(
-    `SELECT a.url_hash, a.platform, a.title, i.what, i.use, i.apply, i.source AS isrc, i.model
+    `SELECT a.url_hash, a.platform, a.title, i.what, i.use, i.apply, i.title_ja, i.term, i.term_meaning,
+            i.source AS isrc, i.model
      FROM articles a LEFT JOIN insights i ON i.url_hash = a.url_hash
      WHERE a.url_hash IN (${hashes.map(() => "?").join(",")})`,
   )
@@ -698,10 +733,25 @@ async function handleInsights(url, env) {
     .all();
   const insights = {};
   for (const r of rows.results) {
-    insights[r.url_hash] =
-      r.isrc === "ai" && r.what
-        ? { what: r.what, use: r.use, apply: r.apply, source: "ai", model: r.model }
-        : { ...fallbackInsight({ platform: r.platform, title: r.title }), source: "rule" };
+    if (r.isrc === "ai" && r.what) {
+      insights[r.url_hash] = {
+        title_ja: r.title_ja,
+        what: r.what,
+        use: r.use,
+        apply: r.apply,
+        term: r.term,
+        term_meaning: r.term_meaning,
+        source: "ai",
+        model: r.model,
+      };
+    } else {
+      // AI の解説が無い記事は、出典の種類ごとの定型の解説。日本語の見出しだけ付いていれば、それも添える
+      insights[r.url_hash] = {
+        ...fallbackInsight({ platform: r.platform, title: r.title }),
+        title_ja: r.isrc === "title" ? r.title_ja : null,
+        source: "rule",
+      };
+    }
   }
   return json({ insights });
 }

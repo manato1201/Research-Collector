@@ -88,7 +88,10 @@ const CATEGORY_LABELS = {
   software_engineering: "ソフトウェア工学・論文",
 };
 
-export const INSIGHT_LIMITS = { what: 90, use: 110, apply: 120 };
+export const INSIGHT_LIMITS = { title_ja: 50, what: 140, use: 110, apply: 120, term: 24, term_meaning: 90 };
+
+/** 解説の版。2 = 初心者・聞き手向け(日本語の見出し・かんたんな概要・用語の説明)。古い版の行は、再生成の対象。 */
+export const INSIGHT_VERSION = 2;
 
 /**
  * 読み手のプロジェクトのうち、題名・要約・キーワードに、プロジェクトのキーワードが含まれるものだけ。
@@ -113,17 +116,26 @@ export function buildMessages(article, { projects = [], noThink = false } = {}) 
     .join(" / ");
 
   const system = [
-    "あなたは、ゲーム開発・グラフィクス・ソフトウェア工学の技術情報を紹介する、ラジオ番組の解説者です。",
-    "与えられた1件の記事情報(題名・要約・出典)だけを根拠に、日本語で、次の3項目を書きます。",
-    '- what: これは何か(1文。' + INSIGHT_LIMITS.what + "字以内)",
-    "- use: 読むと何ができるか・何の役に立つか(1文。" + INSIGHT_LIMITS.use + "字以内)",
-    "- apply: 制作・開発にどう応用できるか。具体的な場面を1つ(1文。" + INSIGHT_LIMITS.apply + "字以内)",
+    "あなたは、ゲーム開発・グラフィクス・ソフトウェア工学の技術情報を、初心者にもやさしく紹介する、ラジオ番組の解説者です。",
+    "聞き手は、耳だけで聞いています。専門知識の無い人にも「何の話か」「聞く価値があるか」が伝わるように書きます。",
+    "与えられた1件の記事情報(題名・要約・出典)だけを根拠に、日本語で、次の項目を書きます。",
+    "- title_ja: 題名の、自然な日本語の見出し(" + INSIGHT_LIMITS.title_ja + "字以内)。題名がすでに日本語ならそのまま。製品名・固有名詞は英字のままでよい。",
+    "- what: 何についての話か。初心者向けに、専門用語は言い換えながら1〜2文(" + INSIGHT_LIMITS.what + "字以内)。",
+    "- use: 読むと(聞くと)何が分かるか・何の役に立つか(1文。" + INSIGHT_LIMITS.use + "字以内)。",
+    "- apply: 制作・開発にどう応用できるか。具体的な場面を1つ(1文。" + INSIGHT_LIMITS.apply + "字以内)。",
+    "- term: 初心者がつまずきそうな専門用語を1つ(" + INSIGHT_LIMITS.term + "字以内)。無ければ空文字。",
+    "- term_meaning: その用語の、やさしい説明(1文。" + INSIGHT_LIMITS.term_meaning + "字以内)。意味に自信が無い用語は、term ごと空文字にする。",
     "守ること:",
+    "- what は、題名の言い換えや「〜の話です」だけで終わらせない。要約から分かる中身(何を作った・何が分かった・何が変わった)を、必ず1つ入れる。",
+    "- 「わかりやすい内容です」「役に立ちます」だけの、中身の無い文は書かない。何がどう役に立つかを言う。",
+    "- term は、題名・要約に出てくる言葉から選ぶ。",
+    "- 耳で聞いて分かる、話し言葉の「です・ます」調で書く。1文は短く。「〜することが可能となっている」のような硬い言い方は使わない。",
     "- 題名・要約に書かれていないことを、事実として断定しない。書かれていない部分は「〜できそうです」「〜の場面で役立つ可能性があります」と控えめに言う。",
-    "- 数字・バージョン・固有名詞は、題名・要約にあるものだけを使う。",
+    "- 数字・バージョン・固有名詞は、題名・要約にあるものだけを使い、綴りを一字も変えずに写す。",
+    "- 略語や製品名の正式名称を、自分の知識で補わない。題名・要約に書かれていない略語は、意味を説明せず、そのまま使う。",
     "- 誇張・宣伝文句・絵文字・URL・英語の文は使わない(固有名詞と技術用語は、英字のままでよい)。",
     "- 「読み手の関心」が「なし」でないときだけ、apply でそれに触れてよい。「なし」のときは、触れない。",
-    '- 出力は JSON のみ: {"what":"…","use":"…","apply":"…"}',
+    '- 出力は JSON のみ: {"title_ja":"…","what":"…","use":"…","apply":"…","term":"…","term_meaning":"…"}',
   ].join("\n");
 
   const user = JSON.stringify(
@@ -148,36 +160,79 @@ const URL_RE = /https?:\/\/\S+/g;
 
 function cleanField(v, max) {
   if (typeof v !== "string") return null;
-  let s = v.replace(URL_RE, "").replace(/\s+/g, " ").trim();
+  // 先頭の見出し記号(#・*・-・・)は、読み上げでも表示でも邪魔なので落とす
+  let s = v.replace(URL_RE, "").replace(/\s+/g, " ").replace(/^[#*・\-\s]+/, "").trim();
   if (!s) return null;
   if (s.length > max) s = s.slice(0, max - 1).replace(/[、,\s]+$/, "") + "…";
   return s;
 }
 
-/**
- * モデルの出力から、3項目を取り出す。取れない・不十分なら null(呼び出し側が規則ベースで補う)。
- * @returns {{what: string, use: string, apply: string} | null}
- */
-export function parseInsight(raw) {
+const JA_RE = /[぀-ヿ一-鿿]/;
+
+/** モデルの出力から JSON のオブジェクトを取り出す(考える過程・コードフェンス・前後の文は無視)。 */
+function extractJson(raw) {
   if (typeof raw !== "string") return null;
   // 「考える」過程(<think>…</think>)に含まれる { を拾わない
   const text = raw.replace(/<think>[\s\S]*?<\/think>/g, "");
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end <= start) return null;
-  let obj;
   try {
-    obj = JSON.parse(text.slice(start, end + 1));
+    return JSON.parse(text.slice(start, end + 1));
   } catch {
     return null;
   }
-  const what = cleanField(obj?.what, INSIGHT_LIMITS.what);
-  const use = cleanField(obj?.use, INSIGHT_LIMITS.use);
-  const apply = cleanField(obj?.apply, INSIGHT_LIMITS.apply);
+}
+
+/**
+ * モデルの出力から、解説の項目を取り出す。what / use / apply が揃わない・日本語でないなら null(呼び出し側が規則ベースで補う)。
+ * title_ja・用語は、無ければ null(あるものだけ使う。用語は、言葉と説明が揃ったときだけ)。
+ * @returns {{title_ja: string|null, what: string, use: string, apply: string, term: string|null, term_meaning: string|null} | null}
+ */
+export function parseInsight(raw) {
+  const obj = extractJson(raw);
+  if (!obj) return null;
+  const what = cleanField(obj.what, INSIGHT_LIMITS.what);
+  const use = cleanField(obj.use, INSIGHT_LIMITS.use);
+  const apply = cleanField(obj.apply, INSIGHT_LIMITS.apply);
   if (!what || !use || !apply) return null;
   // 英語だけの出力(日本語を指示している)は使わない
-  if (![what, use, apply].every((s) => /[぀-ヿ一-鿿]/.test(s))) return null;
-  return { what, use, apply };
+  if (![what, use, apply].every((s) => JA_RE.test(s))) return null;
+  const titleJa = cleanField(obj.title_ja, INSIGHT_LIMITS.title_ja);
+  const term = cleanField(obj.term, INSIGHT_LIMITS.term);
+  const meaning = cleanField(obj.term_meaning, INSIGHT_LIMITS.term_meaning);
+  const hasTerm = term && meaning && JA_RE.test(meaning);
+  return {
+    title_ja: titleJa && JA_RE.test(titleJa) ? titleJa : null,
+    what,
+    use,
+    apply,
+    term: hasTerm ? term : null,
+    term_meaning: hasTerm ? meaning : null,
+  };
+}
+
+/** 要約が無い(題名だけの)英語の記事に、日本語の見出しだけを付けさせる指示。題名の翻訳だけなので、作り話になりにくい。 */
+export function buildTitleMessages(article, { noThink = false } = {}) {
+  const system = [
+    "あなたは、技術記事の題名を、自然な日本語の見出しにする翻訳者です。",
+    "与えられた題名だけを、" + INSIGHT_LIMITS.title_ja + "字以内の日本語の見出しにします。",
+    "守ること:",
+    "- 題名に無い内容を足さない。製品名・固有名詞・バージョン番号は、綴りを一字も変えずに、英字のまま写す。",
+    "- 絵文字・URL・説明文は付けない。",
+    '- 出力は JSON のみ: {"title_ja":"…"}',
+  ].join("\n");
+  const user = JSON.stringify({ 題名: article.title }, null, 1);
+  return [
+    { role: "system", content: system },
+    { role: "user", content: (noThink ? "/no_think\n" : "") + user },
+  ];
+}
+
+/** @returns {string | null} 日本語の見出し。取れない・日本語を含まないなら null */
+export function parseTitle(raw) {
+  const t = cleanField(extractJson(raw)?.title_ja, INSIGHT_LIMITS.title_ja);
+  return t && JA_RE.test(t) ? t : null;
 }
 
 /** AI が使えない・失敗したときの、出典の種類ごとの定型の解説。 */
@@ -196,4 +251,14 @@ export function extractText(result) {
   if (typeof choice?.message?.content === "string") return choice.message.content;
   if (typeof choice?.text === "string") return choice.text;
   return null;
+}
+
+/**
+ * 日本語の見出しが、元の題名の綴りを崩していないか。見出しに含まれる英字の語(3字以上)が、すべて元の題名にもあること。
+ * モデルが固有名詞を誤って写す(SILENT HILL → SILENT HIL など)と、音声でそのまま誤りを読み上げてしまうため。
+ */
+export function titleIsFaithful(titleJa, original) {
+  const words = (t) => String(t ?? "").toLowerCase().match(/[a-z0-9]{3,}/g) ?? [];
+  const have = new Set(words(original));
+  return words(titleJa).every((w) => have.has(w));
 }

@@ -53,7 +53,7 @@ test("a corner reads at most three items when insights are available", () => {
   const p = buildRadioProgram(base({ insights }));
   const g = p.corners.find((c) => c.id === "game_dev_tech").text;
   assert.ok(g.includes("記事5のタイトル") && !g.includes("記事6のタイトル"));
-  assert.ok(g.includes("ほか2件"));
+  assert.ok(g.includes("ほかにも、2件あります"));
 });
 
 test("the recommendation corner sits after the headlines and uses the ad-style structure", () => {

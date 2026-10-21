@@ -1,6 +1,6 @@
 // Research Broadcast — ページ: ラジオ(今日の放送を、番組として聴く)
 //
-// 原稿は radio-script.js が、その日の episode から規則ベースで作る(AI は使わない)。
+// 原稿は radio-script.js が、その日の episode と、記事ごとの解説(AI が題名・要約から書いたもの)から規則ベースで組み立てる。
 // 読み上げはブラウザの音声(player.js)。番組表から、聴きたいコーナーの頭へ飛べる。
 
 import { navigate } from "./router.js";
@@ -54,7 +54,8 @@ export async function programFromEpisodes(episodes, date) {
   const today = jstNow().toISOString().slice(0, 10);
   const hour = date === today ? jstNow().getUTCHours() : 12;
   const highlights = all.data.highlights ?? [];
-  const items = [...highlights, ...lanes.flatMap((l) => l.items.slice(0, 4))];
+  // 番組が選ぶ候補ぶん(各カテゴリの先頭 15 件)の解説を取る。先頭の記事は他のコーナーで読み終わっていることがあるため、多めに
+  const items = [...highlights, ...lanes.flatMap((l) => l.items.slice(0, 15))];
   const insights = await insightsFor(items);
   const rec = buildRecommendation(items, insights);
   const ins = rec?.insight;
@@ -66,7 +67,7 @@ export async function programFromEpisodes(episodes, date) {
     lanes,
     insights,
     recommend: rec && ins
-      ? { title: rec.article.title, what: ins.what, use: ins.use, apply: ins.apply, projects: rec.projects }
+      ? { title: rec.article.title, title_ja: ins.title_ja, what: ins.what, use: ins.use, apply: ins.apply, projects: rec.projects }
       : null,
   });
 }
@@ -76,7 +77,7 @@ export function programChapters(program) {
   return program.corners.map((c) => ({ label: c.label, text: c.speech, jingle: c.jingle }));
 }
 
-const KIND_LABEL = { open: "OP", headlines: "注目", recommend: "おすすめ", category: "コーナー", close: "ED" };
+const KIND_LABEL = { open: "OP", headlines: "注目", recommend: "おすすめ", category: "コーナー", glossary: "用語", recap: "まとめ", close: "ED" };
 
 export async function pageRadio(view, params) {
   mount(view, renderSkeleton());

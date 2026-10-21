@@ -408,6 +408,7 @@ with sync_playwright() as p:
     page.keyboard.press("g")
     page.keyboard.press("r")
     page.wait_for_url(re.compile(r"/radio"))
+    page.wait_for_selector(".guide-row")  # 読み込みの完了を待つ(途中で次のページへ移ると、通信を自分で中断してしまう)
     check("keys: g then r goes to the radio", "/radio" in page.url)
     page.goto(BASE + "/search?q=Zebracorn")
     page.wait_for_selector(".item")
@@ -461,7 +462,7 @@ with sync_playwright() as p:
     page.wait_for_selector(".lanes")
     page.wait_for_selector(".reco", timeout=10000)
     check("home: today's pick-up card with what / use / apply",
-          "PICK UP" in page.inner_text(".reco") and page.locator(".reco .insight-list dd").count() == 3
+          "PICK UP" in page.inner_text(".reco") and page.locator(".reco .insight-list dd").count() >= 3
           and len(page.inner_text(".reco .reco-title").strip()) > 0)
     check("home: the pick-up card says whether the text is AI-written or standard",
           page.locator(".reco .badge", has_text="解説").count() >= 1)
@@ -469,7 +470,7 @@ with sync_playwright() as p:
     page.wait_for_selector("#drawer:not([hidden])")
     page.wait_for_selector("#drawer .insight:not([hidden])", timeout=8000)
     check("drawer: insight block with all three parts and a caution note",
-          page.locator("#drawer .insight dd").count() == 3 and "誤り" in page.inner_text("#drawer .insight") or "共通する説明" in page.inner_text("#drawer .insight"))
+          page.locator("#drawer .insight dd").count() >= 3 and "誤り" in page.inner_text("#drawer .insight") or "共通する説明" in page.inner_text("#drawer .insight"))
     page.keyboard.press("Escape")
     page.goto(BASE + "/radio")
     page.wait_for_selector(".guide-row")
@@ -477,6 +478,11 @@ with sync_playwright() as p:
           page.locator(".guide-row", has_text="今日のおすすめ").count() == 1)
     check("radio: the script explains what it is and how to use it",
           "この記事を読むと" in page.evaluate("document.querySelector('.script').textContent"))
+    script_text = page.evaluate("document.querySelector('.script').textContent")
+    check("radio: the opening previews highlights and the categories are introduced",
+          "今日の注目は" in script_text and "に関する話題です" in script_text, script_text[:200])
+    check("radio: a recap corner closes the program before the ending",
+          page.locator(".guide-row", has_text="今日のおさらい").count() == 1)
 
     # --- テーマ
     before = page.evaluate("document.documentElement.getAttribute('data-theme')")

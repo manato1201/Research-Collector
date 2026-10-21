@@ -69,10 +69,10 @@ const program = (over = {}) =>
         id: "game_dev_tech",
         label: "Game-Dev-Tech",
         count: 24,
-        items: Array.from({ length: 6 }, (_, i) => item(`G${i}`, `要約${i}。`)),
+        items: Array.from({ length: 6 }, (_, i) => item(`ゲーム記事${i}`, `要約${i}。`)),
       },
       { id: "graphics_research", label: "Graphics-Research", count: 0, items: [] },
-      { id: "software_engineering", label: "Software-Engineering", count: 3, items: [item("S0"), item("S1"), item("S2")] },
+      { id: "software_engineering", label: "Software-Engineering", count: 3, items: [item("ソフト記事0"), item("ソフト記事1"), item("ソフト記事2")] },
     ],
     ...over,
   });
@@ -81,13 +81,13 @@ test("program: opening, headlines, one corner per non-empty category, ending", (
   const p = program();
   assert.deepEqual(
     p.corners.map((c) => c.id),
-    ["open", "headlines", "game_dev_tech", "software_engineering", "close"],
+    ["open", "headlines", "game_dev_tech", "software_engineering", "recap", "close"],
   );
   assert.equal(p.corners[0].jingle, "open");
   assert.equal(p.corners.at(-1).jingle, "close");
   assert.ok(p.corners[0].text.startsWith("おはようございます"));
   assert.ok(p.corners[0].text.includes("全部で34件"));
-  assert.ok(p.corners[0].text.includes("ゲーム開発が24件"));
+  assert.ok(!p.corners[0].text.includes("内訳"), "the breakdown overlaps (multi-category items) and does not add up to the total, so it is not spoken");
   assert.ok(!p.corners[0].text.includes("グラフィクスが"), "empty categories are not announced");
 });
 
@@ -101,8 +101,8 @@ test("program: headlines are capped at three and numbered", () => {
 test("program: a corner reads at most four items and mentions the rest", () => {
   const p = program();
   const g = p.corners.find((c) => c.id === "game_dev_tech").text;
-  assert.ok(g.includes("G3") && !g.includes("G4"));
-  assert.ok(g.includes("ほか20件は、サイトでご覧ください"));
+  assert.ok(g.includes("ゲーム記事3") && !g.includes("ゲーム記事4"));
+  assert.ok(g.includes("ほかにも、20件あります"));
   const s = p.corners.find((c) => c.id === "software_engineering").text;
   assert.ok(!s.includes("ほか"));
 });

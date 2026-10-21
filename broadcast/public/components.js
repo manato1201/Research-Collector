@@ -250,18 +250,23 @@ export function renderInsightParts(ins) {
     h(
       "dl",
       { class: "insight-list" },
-      h("dt", null, "これは"),
+      // 日本語の見出し(英語の題名に付く)。初心者・日本語で読む人向け
+      ins.title_ja ? h("dt", null, "日本語の見出し") : null,
+      ins.title_ja ? h("dd", null, ins.title_ja) : null,
+      h("dt", null, "かんたんに言うと"),
       h("dd", null, ins.what),
-      h("dt", null, "できること"),
+      h("dt", null, "分かること"),
       h("dd", null, ins.use),
       h("dt", null, "応用"),
       h("dd", null, ins.apply),
+      isAi && ins.term && ins.term_meaning ? h("dt", null, "用語メモ") : null,
+      isAi && ins.term && ins.term_meaning ? h("dd", null, `${ins.term}: ${ins.term_meaning}`) : null,
     ),
     h(
       "p",
       { class: "tool-note" },
       isAi
-        ? "題名と要約だけを根拠に、AI が書いたものです。誤りを含むことがあります。詳しくは、元の記事を確認してください。"
+        ? "題名と要約だけを根拠に、AI が初心者向けに書いたものです(用語の説明を含みます)。誤りを含むことがあります。詳しくは、元の記事を確認してください。"
         : "この出典の記事に共通する説明です(個別の記事の内容ではありません)。",
     ),
   ];
