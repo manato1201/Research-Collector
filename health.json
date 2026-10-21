@@ -1,25 +1,34 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-21T09:02:13Z",
-    "collected": 98,
+    "run_at": "2026-10-21T23:58:54Z",
+    "collected": 73,
     "new": 10,
-    "notebooklm_ok": 10,
+    "notebooklm_ok": 13,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 88,
     "unclassified": 0,
-    "merged": 4,
+    "merged": 0,
     "by_source": {
       "Zenn/Qiita": 50,
       "Unity/UE": 10,
-      "CEDEC": 25,
+      "CEDEC": 0,
       "ReleaseNotes": 13,
       "X posts": 0
     },
-    "failed_sources": 0,
-    "source_failures": [],
+    "failed_sources": 2,
+    "source_failures": [
+      {
+        "source": "https://cedil.cesa.or.jp/",
+        "error": "<urlopen error [Errno -5] No address associated with hostname>"
+      },
+      {
+        "source": "https://www.youtube.com/feeds/videos.xml?channel_id=UCmHaPXvwn9_4pMNAV6ewgoA",
+        "error": "<unknown>:3:11: not well-formed (invalid token)"
+      }
+    ],
     "watch_new": 0
   },
   "weekly": {
