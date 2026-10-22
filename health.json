@@ -1,8 +1,8 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-21T23:58:54Z",
-    "collected": 73,
+    "run_at": "2026-10-22T09:10:31Z",
+    "collected": 130,
     "new": 10,
     "notebooklm_ok": 13,
     "notebooklm_skip": 0,
@@ -10,23 +10,40 @@
     "notebooks_deleted": 0,
     "notebooks_total": 88,
     "unclassified": 0,
-    "merged": 0,
+    "merged": 3,
     "by_source": {
-      "Zenn/Qiita": 50,
+      "Zenn/Qiita": 51,
       "Unity/UE": 10,
-      "CEDEC": 0,
+      "CEDEC": 25,
+      "Papers": 31,
       "ReleaseNotes": 13,
       "X posts": 0
     },
-    "failed_sources": 2,
+    "failed_sources": 6,
     "source_failures": [
       {
-        "source": "https://cedil.cesa.or.jp/",
-        "error": "<urlopen error [Errno -5] No address associated with hostname>"
+        "source": "semantic_scholar:video tutorial software learning",
+        "error": "HTTP 429 after 5 attempts"
       },
       {
-        "source": "https://www.youtube.com/feeds/videos.xml?channel_id=UCmHaPXvwn9_4pMNAV6ewgoA",
-        "error": "<unknown>:3:11: not well-formed (invalid token)"
+        "source": "semantic_scholar:tutorial maintenance technical debt",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:RAG retrieval augmented generation docum",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:LLM tutorial generation step by step",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:DCC tool learning curve creative softwar",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar",
+        "error": "rate limited (HTTP 429): 1 queries skipped"
       }
     ],
     "watch_new": 0
