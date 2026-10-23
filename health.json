@@ -1,52 +1,26 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-22T21:09:45Z",
-    "collected": 123,
-    "new": 11,
+    "run_at": "2026-10-23T09:02:51Z",
+    "collected": 98,
+    "new": 10,
     "notebooklm_ok": 14,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 88,
     "unclassified": 0,
-    "merged": 1,
+    "merged": 2,
     "by_source": {
       "Zenn/Qiita": 50,
       "Unity/UE": 10,
       "CEDEC": 25,
-      "Papers": 25,
       "ReleaseNotes": 13,
       "X posts": 0
     },
-    "failed_sources": 6,
-    "source_failures": [
-      {
-        "source": "semantic_scholar:developer documentation usage behavior",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:video tutorial software learning",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:tutorial maintenance technical debt",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:software documentation outdated obsolete",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:RAG retrieval augmented generation docum",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar",
-        "error": "rate limited (HTTP 429): 3 queries skipped"
-      }
-    ],
-    "watch_new": 4
+    "failed_sources": 0,
+    "source_failures": [],
+    "watch_new": 3
   },
   "weekly": {
     "status": "ok",
