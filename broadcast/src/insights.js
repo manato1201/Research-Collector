@@ -262,3 +262,17 @@ export function titleIsFaithful(titleJa, original) {
   const have = new Set(words(original));
   return words(titleJa).every((w) => have.has(w));
 }
+
+/**
+ * 解説をどう作るかの判断(X18: 小さな判断に、名前のついた選択肢を与え、結果を機械で確認し、あとから記録で評価する)。
+ *   full  要約が十分にある → 初心者向けの解説(題名・要約を根拠にする)
+ *   title 要約が無く、題名が日本語でない → 日本語の見出しだけ(題名の翻訳。作り話になりにくい)
+ *   skip  要約が無く、題名が日本語 → 何も作らない(題名からの推測は、書かれていないことを補いやすい)
+ * 結果の確認は parseInsight / parseTitle / titleIsFaithful。結果は、モード別に数えて記録に残す。
+ * @returns {{mode: "full" | "title" | "skip", reason: string}}
+ */
+export function decideInsightMode(article) {
+  if (hasBasis(article)) return { mode: "full", reason: "summary_long_enough" };
+  if (!JA_RE.test(String(article.title ?? ""))) return { mode: "title", reason: "no_summary_non_japanese_title" };
+  return { mode: "skip", reason: "no_summary_japanese_title" };
+}

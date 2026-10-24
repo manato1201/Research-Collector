@@ -146,7 +146,7 @@ Content-Type: application/json
 | `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブル(articles・episodes・reports・board・watch・prefs・meta・insights)を1回200行までページで返す(`scripts/backup_d1.py` が使う) |
 | `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
-| `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する |
+| `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する 同じ IP から失敗が続くと(15分で8回)、**429**(`retry-after` つき)で、合っているパスワードでも断る。logout も Origin 検査あり |
 | `GET /api/health` | なし | 生存確認のみ。データは返さない |
 
 認証は2通り: **機械**(GitHub Actions)は `Authorization: Bearer <INGEST_TOKEN>`、**人**(ブラウザ)は `VIEW_PASSWORD` でログインして得る Cookie。取り込みは Bearer のみ。`INGEST_TOKEN` も `VIEW_PASSWORD` も未設定なら、認証が要る経路は **全て拒否(503)** する。比較は SHA-256 にしてから `crypto.subtle.timingSafeEqual`(定数時間)。誤ったパスワードは 800ms 待ってから返す(総当たりを遅くするだけなので、**パスワードは長く**すること)。

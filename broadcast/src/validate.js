@@ -519,7 +519,8 @@ export const PREF_KEYS = ["watchwords", "muted_sources", "projects"];
  * @returns {{ok: false, error: string} | {ok: true, terms: string[], useFts: boolean, match: string}}
  */
 export function parseSearch(q) {
-  const text = String(q ?? "").trim();
+  // 制御文字(NUL を含む)は、検索の照会(FTS5)がエラーになるので、空白に置き換える
+  const text = String(q ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").trim();
   if (text.length < 1 || text.length > 60) return { ok: false, error: "bad_query" };
   const terms = text.split(/\s+/).filter(Boolean).slice(0, 5);
   const useFts = terms.every((t) => [...t].length >= 3);

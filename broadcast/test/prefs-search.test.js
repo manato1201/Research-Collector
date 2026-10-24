@@ -67,3 +67,11 @@ test("board: 'read' is a valid state", () => {
   assert.ok(BOARD_STATES.includes("read"));
   assert.deepEqual(validateBoardInput({ state: "read" }), { ok: true, state: "read", note: "" });
 });
+
+test("parseSearch: control characters (NUL etc.) are replaced, not passed to the FTS query (found by the X2 fuzz run)", () => {
+  const r = parseSearch("日本語" + String.fromCharCode(0) + "テスト");
+  assert.ok(r.ok);
+  assert.deepEqual(r.terms, ["日本語", "テスト"]);
+  assert.ok(!r.match.includes(String.fromCharCode(0)));
+  assert.equal(parseSearch(String.fromCharCode(0) + String.fromCharCode(7)).ok, false); // 空になるなら、不正な検索
+});

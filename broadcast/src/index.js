@@ -28,15 +28,16 @@
 import {
   buildMessages,
   buildTitleMessages,
+  decideInsightMode,
   extractText,
   fallbackInsight,
-  hasBasis,
   INSIGHT_VERSION,
   MIN_SUMMARY_CHARS,
   parseInsight,
   parseTitle,
   titleIsFaithful,
 } from "./insights.js";
+import { LOGIN_WINDOW_SEC, recordFailure, throttleKey, throttleState } from "./throttle.js";
 import {
   parseCookie,
   SESSION_COOKIE,
@@ -64,7 +65,11 @@ import {
   validatePref,
 } from "./validate.js";
 
-const JSON_HEADERS = { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" };
+const JSON_HEADERS = {
+  "content-type": "application/json; charset=utf-8",
+  "cache-control": "no-store",
+  "x-content-type-options": "nosniff",
+};
 const BATCH_SIZE = 50;
 
 const json = (data, status = 200, extra = {}) =>
@@ -105,7 +110,7 @@ async function route(request, env, url) {
     return method === "POST" ? handleLogin(request, env, url) : methodNotAllowed("POST");
   }
   if (pathname === "/api/logout") {
-    return method === "POST" ? handleLogout(url) : methodNotAllowed("POST");
+    return method === "POST" ? handleLogout(request, url) : methodNotAllowed("POST");
   }
   if (pathname === "/api/session") {
     if (method !== "GET") return methodNotAllowed("GET");
@@ -256,17 +261,45 @@ async function handleLogin(request, env, url) {
     return json({ error: "invalid_json" }, 400);
   }
   const password = typeof body?.password === "string" ? body.password : "";
+
+  // 同じ IP からの失敗が続いたら、窓が明けるまで断る(合っているパスワードでも断る)。D1 が使えないときは、制限せずに進める
+  const nowSec = Math.floor(Date.now() / 1000);
+  const key = await throttleKey(request.headers.get("cf-connecting-ip") ?? "unknown");
+  let record = null;
+  try {
+    const row = await env.DB.prepare("SELECT value FROM meta WHERE key = ?").bind(key).first();
+    record = row ? JSON.parse(row.value) : null;
+  } catch (err) {
+    console.error(JSON.stringify({ message: "login throttle read failed", error: String(err?.message ?? err).slice(0, 120) }));
+  }
+  const locked = throttleState(record, nowSec);
+  if (locked.locked) return json({ error: "too_many_attempts" }, 429, { "retry-after": String(locked.retryAfter) });
+
   if (!(await timingSafeEqualStrings(password, env.VIEW_PASSWORD))) {
-    // 総当たりを遅くする(Worker 側で防げるのは、この待ちだけ。長いパスワードを使うこと)
+    try {
+      await env.DB.prepare(UPSERT_META_SQL).bind(key, JSON.stringify(recordFailure(record, nowSec))).run();
+    } catch {
+      /* 記録できなくても、拒否は変わらない */
+    }
+    // 総当たりを遅くする(失敗回数の制限に加えて、待ちも入れる。長いパスワードを使うこと)
     await new Promise((resolve) => setTimeout(resolve, 800));
     return json({ error: "wrong_password" }, 401);
+  }
+  if (record) {
+    try {
+      await env.DB.prepare("DELETE FROM meta WHERE key = ?").bind(key).run();
+    } catch {
+      /* 失敗の記録が残るだけ。窓が明ければ消える */
+    }
   }
   const value = await signSession(env.VIEW_PASSWORD);
   const secure = url.protocol === "https:";
   return json({ ok: true }, 200, { "set-cookie": sessionCookieHeader(value, SESSION_TTL_SECONDS, secure) });
 }
 
-function handleLogout(url) {
+function handleLogout(request, url) {
+  // 他のサイトから、勝手にログアウトさせられないように(Cookie 認証の書き込みと同じ、Origin の確認)
+  if (!sameOrigin(request, url)) return json({ error: "bad_origin" }, 403);
   return json({ ok: true }, 200, { "set-cookie": sessionCookieHeader("", 0, url.protocol === "https:") });
 }
 
@@ -409,6 +442,10 @@ async function handleIngest(request, env) {
   // 古い検知(ウォッチ)も、記事と同じ保持期間で消す
   await env.DB.prepare("DELETE FROM watch WHERE detected_at < ?")
     .bind(cutoff.toISOString().slice(0, 19) + "Z")
+    .run();
+  // 窓が明けたログイン失敗の記録を消す
+  await env.DB.prepare("DELETE FROM meta WHERE key LIKE 'lf:%' AND CAST(json_extract(value, '$.t0') AS INTEGER) < ?")
+    .bind(Math.floor(now.getTime() / 1000) - LOGIN_WINDOW_SEC)
     .run();
 
   const accepted = result.accepted.length + result.episodes.length + result.reports.length + result.watch.length;
@@ -671,10 +708,21 @@ async function handleEnrich(env, url) {
   let titled = 0;
   let unusable = 0;
   let errors = 0;
+  // 判断(モード)ごとの結果の記録。あとから、どの判断がどれだけ使えたかを見られる(X18)
+  const decisions = {
+    full: { ok: 0, unusable: 0, errors: 0 },
+    title: { ok: 0, unusable: 0, errors: 0 },
+    skip: { count: 0 },
+  };
   const nowIso = new Date().toISOString();
   for (const row of rows.results) {
     const article = rowToArticle(row);
-    const full = hasBasis(article);
+    const { mode } = decideInsightMode(article);
+    if (mode === "skip") {
+      decisions.skip.count++;
+      continue;
+    }
+    const full = mode === "full";
     let text;
     try {
       const result = await env.AI.run(model, {
@@ -685,7 +733,8 @@ async function handleEnrich(env, url) {
       text = extractText(result);
     } catch (err) {
       errors++;
-      console.error(JSON.stringify({ message: "ai failed", error: String(err?.message ?? err).slice(0, 200) }));
+      decisions[mode].errors++;
+      console.error(JSON.stringify({ message: "ai failed", mode, error: String(err?.message ?? err).slice(0, 200) }));
       continue;
     }
     const h = article.url_hash;
@@ -698,6 +747,7 @@ async function handleEnrich(env, url) {
           .bind(h, parsed.what, parsed.use, parsed.apply, parsed.title_ja, parsed.term, parsed.term_meaning, "ai", model, nowIso, INSIGHT_VERSION)
           .run();
         ok++;
+        decisions.full.ok++;
         continue;
       }
     } else {
@@ -707,6 +757,7 @@ async function handleEnrich(env, url) {
           .bind(h, null, null, null, titleJa, null, null, "title", model, nowIso, INSIGHT_VERSION)
           .run();
         titled++;
+        decisions.title.ok++;
         continue;
       }
     }
@@ -714,9 +765,11 @@ async function handleEnrich(env, url) {
       .bind(h, null, null, null, null, null, null, "none", model, nowIso, INSIGHT_VERSION)
       .run();
     unusable++;
+    decisions[mode].unusable++;
   }
+  console.log(JSON.stringify({ message: "enrich decisions", model, ...decisions }));
   const pending = await env.DB.prepare(`SELECT COUNT(*) AS n ${PENDING_SQL}`).bind(...PENDING_BINDS).first();
-  return json({ processed: rows.results.length, ok, titled, unusable, errors, pending: pending?.n ?? 0, model });
+  return json({ processed: rows.results.length, ok, titled, unusable, errors, decisions, pending: pending?.n ?? 0, model });
 }
 
 /** 記事の解説。AI が書いたものがあればそれ、無ければ、出典の種類ごとの定型の解説(source = "rule")。 */
