@@ -5,6 +5,7 @@ import { test } from "node:test";
 import {
   buildMessages,
   buildTitleMessages,
+  decideInsightMode,
   extractText,
   fallbackInsight,
   hasBasis,
@@ -145,4 +146,11 @@ test("titleIsFaithful: English words in the Japanese headline must exist in the 
   assert.equal(titleIsFaithful("SILENT HIL: Townfall のホラー表現", original), false); // 綴りの崩れ
   assert.equal(titleIsFaithful("新しい機能の紹介", original), true); // 英字を含まない見出しは問題なし
   assert.equal(titleIsFaithful("ホラー表現と Lumen", original), false); // 元に無い語を足した
+});
+
+test("decideInsightMode: named options with a reason (X18)", () => {
+  assert.deepEqual(decideInsightMode(article()), { mode: "full", reason: "summary_long_enough" });
+  assert.deepEqual(decideInsightMode(article({ summary: null })), { mode: "title", reason: "no_summary_non_japanese_title" });
+  assert.deepEqual(decideInsightMode(article({ summary: "", title: "日本語の題名だけの記事" })), { mode: "skip", reason: "no_summary_japanese_title" });
+  assert.equal(decideInsightMode(article({ summary: "短い", title: "日本語" })).mode, "skip");
 });

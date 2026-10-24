@@ -182,9 +182,10 @@ check("Worker rejects a non-allowlisted category (all rejected -> 422)", s == 42
 s, r = call("GET", "/api/articles?limit=200&status=added")
 arts = r["articles"]
 check("articles returned with parsed fields", s == 200 and isinstance(arts[0]["categories"], list) and isinstance(arts[0]["review"], bool))
-x = [a for a in arts if a["source_type"] == "x_post"]
+# 一覧の先頭200件に入るとは限らない(実データが増えるため)ので、検索で直接引く
+x = [a for a in call("GET", "/api/search?q=" + urllib.parse.quote("X投稿"))[1]["articles"] if a["source_type"] == "x_post"]
 check("x_post stored without summary", x and x[0]["summary"] is None, x)
-w = [a for a in arts if a["url_hash"] == "aaaaaaaaaaaaaaaa"]
+w = [a for a in call("GET", "/api/search?q=" + urllib.parse.quote("要約つき"))[1]["articles"] if a["url_hash"] == "aaaaaaaaaaaaaaaa"]
 check("summary stored for normal articles", w and w[0]["summary"] and w[0]["summary_src"] == "feed", w)
 check("local-only category article not stored", not [a for a in arts if a["url_hash"] == "cccccccccccccccc"])
 
@@ -466,10 +467,29 @@ if s == 503:
 else:
     check("enrich reports what it did", s == 200 and all(k in r for k in ("processed", "ok", "unusable", "errors", "pending", "model")), (s, r))
     if s == 200 and r["ok"] >= 1:
-        s2, r2 = call("GET", "/api/insights?hashes=" + ",".join(recent))
-        check("an enriched article now carries an AI insight", any(v["source"] == "ai" for v in r2["insights"].values()), str(r2)[:200])
+        # 処理されたのは「新しい順」の1件。表示用の一覧に入っているとは限らないので、書き出しで確かめる
+        rows = call("GET", "/api/export?table=insights&limit=200")[1]["rows"]
+        check("an enriched article is stored as a v2 AI insight (Japanese headline fields present)",
+              any(x["source"] == "ai" and x["ver"] == 2 and x["what"] and x["use"] and x["apply"] for x in rows), str(rows[:1])[:200])
+    check("enrich reports a record of its decisions per mode (X18)", s == 200 and set(r["decisions"]) == {"full", "title", "skip"}, r)
     s3, r3 = call("POST", "/api/enrich?limit=1")
     check("enrich is repeatable (idempotent per article)", s3 == 200, (s3, r3))
+
+# --- セキュリティの点検(X2): 乱暴な入力でも、500 にならず、データも漏れない
+nasty = ['"', "'", "' OR 1=1 --", '" OR "1"="1', "*", "a*", "NEAR(a b)", "a:b", "-", "(", ")", "%", "_", "\\", "\x00",
+         "<script>alert(1)</script>", "../../etc/passwd", "a" * 300, "日本語\u0000", "AND", "OR", "NOT"]
+bad = []
+for q in nasty:
+    for path in ("/api/search?q=", "/api/articles?category=", "/api/articles?kind=", "/api/articles?lang=", "/api/articles?exclude_platforms=",
+                 "/api/watchwords?x=", "/api/insights?hashes="):
+        s_, r_ = call("GET", path + urllib.parse.quote(q))
+        if s_ >= 500:
+            bad.append((path, q[:20], s_))
+check("hostile query strings never cause a server error (no 5xx)", not bad, bad[:3])
+s_, r_ = call("GET", "/api/search?q=" + urllib.parse.quote("' OR 1=1 --"))
+check("an injection-style search returns only matching rows, not everything", s_ in (200, 400) and (s_ == 400 or len(r_["articles"]) == 0), (s_, str(r_)[:100]))
+s_, r_, hdr = call_raw("GET", "/api/health")
+check("API responses carry X-Content-Type-Options: nosniff", (hdr.get("x-content-type-options") or hdr.get("X-Content-Type-Options")) == "nosniff", dict(hdr))
 
 # --- ログイン(人)・Cookie・CSRF
 if VIEW_PASSWORD:
@@ -483,6 +503,18 @@ if VIEW_PASSWORD:
     s, r, hdr = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers=origin)
     cookie = hdr.get("Set-Cookie") or hdr.get("set-cookie") or ""
     check("login ok sets HttpOnly SameSite=Strict cookie", s == 200 and "rb_session=" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie, cookie[:80])
+    # 試行回数の制限: 同じ IP(ここでは、偽の cf-connecting-ip)から失敗が続くと、合っているパスワードでも 429
+    import random
+    run_ip = f"198.18.{random.randint(1, 250)}.{random.randint(1, 250)}"  # 実行のたびに別の IP(前回の制限の記録が残っていても影響しない)
+    fake = {"origin": BASE, "cf-connecting-ip": run_ip}
+    codes = [call_raw("POST", "/api/login", {"password": "wrong-" + str(i)}, headers=fake)[0] for i in range(8)]
+    s9, r9, h9 = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers=fake)
+    check("login: 8 failures from one IP -> then 429 even with the right password", codes == [401] * 8 and s9 == 429, (codes, s9))
+    check("login: the lockout says when to retry", int(h9.get("Retry-After") or h9.get("retry-after") or 0) > 0, dict(h9))
+    s10, _, _ = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers={"origin": BASE, "cf-connecting-ip": "198.19.0.1"})
+    check("login: another IP is not locked out", s10 == 200, s10)
+    s11, _, _ = call_raw("POST", "/api/logout", None, headers={"origin": "https://evil.example"})
+    check("logout from a foreign origin -> 403", s11 == 403, s11)
     jar = {"cookie": cookie.split(";")[0]}
     s, r, _ = call_raw("GET", "/api/session", headers=jar)
     check("session: authenticated via cookie", r.get("authenticated") is True and r.get("via") == "session", r)

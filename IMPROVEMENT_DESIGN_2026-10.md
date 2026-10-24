@@ -94,3 +94,9 @@
 ## TakayuStudio 系リファレンスの追補(2026-10-15)
 
 TakayuStudio 系リファレンス(Prompt Shelf の出典・権利の扱い、出典種別のフィルタ、お気に入りの書き出し)の反映案は、[ResearchBroadcast_DESIGN.md](ResearchBroadcast_DESIGN.md) の同名の節にまとめた。型の定義は [REFERENCE_TAKAYUSTUDIO_2026-10.md](../REFERENCE_TAKAYUSTUDIO_2026-10.md)。
+
+---
+
+## 外部リソースの追補(2026-10-22)
+
+音声ファイルの生成(audio-studio-mcp)・動画の工程分け・Worker の点検の反映案は、[ResearchBroadcast_DESIGN.md](ResearchBroadcast_DESIGN.md) の同名の節にまとめた。判断は [EXTERNAL_RESOURCES_2026-10-22.md](../EXTERNAL_RESOURCES_2026-10-22.md)。
