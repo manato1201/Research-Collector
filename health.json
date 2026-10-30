@@ -1,44 +1,26 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-10-29T21:07:09Z",
-    "collected": 123,
-    "new": 8,
-    "notebooklm_ok": 11,
+    "run_at": "2026-10-30T09:01:49Z",
+    "collected": 100,
+    "new": 6,
+    "notebooklm_ok": 8,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 92,
     "unclassified": 0,
-    "merged": 0,
+    "merged": 2,
     "by_source": {
       "Zenn/Qiita": 52,
       "Unity/UE": 10,
       "CEDEC": 25,
-      "Papers": 23,
       "ReleaseNotes": 13,
       "X posts": 0
     },
-    "failed_sources": 4,
-    "source_failures": [
-      {
-        "source": "semantic_scholar:developer documentation usage behavior",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:video tutorial software learning",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:how developers learn new tools",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar",
-        "error": "rate limited (HTTP 429): 6 queries skipped"
-      }
-    ],
-    "watch_new": 0
+    "failed_sources": 0,
+    "source_failures": [],
+    "watch_new": 6
   },
   "weekly": {
     "status": "ok",
