@@ -6,6 +6,8 @@ import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, loadBoa
 import { buildTicker, itemsToChapters, markAllRead, openDrawer, readButton, renderInsightParts, renderItem } from "./components.js";
 import { navigate } from "./router.js";
 import { buildRecommendation, programChapters, programFromEpisodes } from "./page-radio.js";
+import { barChart } from "./figures.js";
+import { categoryRows, hasFigureData } from "./figure-data.js";
 
 const HOME_LANE_ITEMS = 8;
 
@@ -109,6 +111,21 @@ export async function pageHome(view, params) {
     );
   }
 
+  // 今日のようす(図): 分野別の新着。収集した件数だけから描く(AI が作った内容は無い)
+  const overviewRows = categoryRows(counts.by_category, catLabel);
+  const overview = hasFigureData(overviewRows)
+    ? h(
+        "section",
+        { class: "panel", "aria-labelledby": "ov-title" },
+        h("h2", { id: "ov-title" }, "今日のようす"),
+        barChart({
+          title: "分野別の新着",
+          rows: overviewRows,
+          note: "複数の分野にまたがる記事は、それぞれに数えます(合計は、全体より多くなることがあります)",
+        }),
+      )
+    : null;
+
   const highlights = unmuted(all.data.highlights ?? []);
   const hl = highlights.length
     ? h(
@@ -185,6 +202,7 @@ export async function pageHome(view, params) {
     reco,
     h("div", { class: "row-controls" }, dateSelect, readAll, radioLink, reportLink),
     hl,
+    overview,
     picker,
     h("div", { class: "lanes" }, ...CATEGORIES.map((c) => laneEls[c])),
     extraLanes.length ? buildExtraLanes(extraLanes) : null,

@@ -243,7 +243,8 @@ function spokenSource(what) {
  * @param {number} [p.perCorner=4]   コーナーごとに読む記事数(解説があるときは3本まで)
  * @param {object} [p.insights]      {url_hash: {title_ja, what, use, apply, term, term_meaning, source: "ai"|"rule"}}(worker の /api/insights)
  * @param {object} [p.recommend]     今日のおすすめ {title, title_ja, what, use, apply, projects}。あればコーナーにする
- * @returns {{title: string, corners: Array<{id, label, kind, text, speech, jingle, seconds}>, totalSeconds: number}}
+ * @returns {{title: string, corners: Array<{id, label, kind, text, speech, jingle, seconds, parts: Array<{text, speech, slide}>}>, totalSeconds: number}}
+ *   parts: 話す内容と、そのとき画面に出す内容(slide)の組。ラジオの画面(page-radio.js)が、読み上げに合わせて slide を切り替える。
  */
 export function buildRadioProgram({
   date, hour = 12, total, highlights = [], lanes = [], perCorner = 4, insights = {}, recommend = null,
@@ -255,6 +256,12 @@ export function buildRadioProgram({
   const spoken = new Set(); // 同じ記事を、別のコーナーでもう一度読まない(複数カテゴリの記事)
   const spokenItems = []; // 読んだ記事(おさらい・用語に使う)。読んだ順
   const keyOf = (it) => it.url_hash ?? it.url ?? it.title;
+
+  /**
+   * コーナーを加える。parts = [{text, slide}]: 話す内容と、そのとき画面に出す内容(slide)の組。
+   * text(コーナー全体の原稿)は、parts の text をつないだもの。
+   */
+  const addCorner = (c, parts) => corners.push({ ...c, parts, text: parts.map((p) => p.text).join("") });
 
   /** 解説(AI)のある記事を先に、すでに読んだ記事は除いて、n本を選ぶ。 */
   const choose = (items, n) => {
@@ -285,6 +292,26 @@ export function buildRadioProgram({
   };
   const sentence = (it, lead, maxSum, opts) => itemSentence(it, lead, maxSum, insights[it.url_hash], opts) + sourceNote(it);
 
+  /** 記事1本の画面(カード)。AI の解説があれば、概要・分かること・用語も出す。 */
+  const itemSlide = (it, n, of, label) => {
+    const ins = insights[it.url_hash];
+    const ai = ins?.source === "ai";
+    return {
+      kind: "item",
+      corner: label,
+      n,
+      of,
+      heading: displayTitle(it, ins) || cleanTitle(it.title),
+      what: ai ? ins.what : firstSentence(it.summary, 90),
+      use: ai ? ins.use : "",
+      term: ai && ins.term && ins.term_meaning ? { term: ins.term, meaning: ins.term_meaning } : null,
+      ai,
+      source: it.platform ?? "",
+      url: it.url ?? "",
+      article: it,
+    };
+  };
+
   // 注目ニュースは先に選んでおく(オープニングで見どころを先出しするため。実際に読む記事と一致させる)
   const headlineItems = highlights.length ? choose(highlights, 3) : [];
   const previewTitles = headlineItems
@@ -292,67 +319,73 @@ export function buildRadioProgram({
     .filter(Boolean)
     .slice(0, 2);
 
-  corners.push({
-    id: "open",
-    kind: "open",
-    label: "オープニング",
-    jingle: "open",
-    text:
-      `${greeting(hour)}。リサーチブロードキャスト、${spokenDate(date)}の放送です。` +
-      "ゲーム開発やグラフィクスの新しい情報を、やさしくご紹介する番組です。" +
-      (total > 0 ? `今日の新着は、全部で${total}件。その中から、気になる話題をお伝えします。` : "今日は、新着がありません。") +
-      // 見どころは、短い文に分けて言う(題名を1文に並べると、耳では追えない長さになる)
-      (previewTitles.length ? `今日の注目は、「${previewTitles[0]}」。${previewTitles[1] ? `それから、「${previewTitles[1]}」。` : ""}` : "") +
-      (headlineItems.length ? "それでは、まず注目のニュースから。" : ""),
-  });
+  addCorner({ id: "open", kind: "open", label: "オープニング", jingle: "open" }, [
+    {
+      text:
+        `${greeting(hour)}。リサーチブロードキャスト、${spokenDate(date)}の放送です。` +
+        "ゲーム開発やグラフィクスの新しい情報を、やさしくご紹介する番組です。" +
+        (total > 0 ? `今日の新着は、全部で${total}件。その中から、気になる話題をお伝えします。` : "今日は、新着がありません。") +
+        // 見どころは、短い文に分けて言う(題名を1文に並べると、耳では追えない長さになる)
+        (previewTitles.length ? `今日の注目は、「${previewTitles[0]}」。${previewTitles[1] ? `それから、「${previewTitles[1]}」。` : ""}` : "") +
+        (headlineItems.length ? "それでは、まず注目のニュースから。" : ""),
+      slide: {
+        kind: "open",
+        date,
+        total: total ?? 0,
+        categories: live.map((l) => ({ id: l.id, label: l.label, count: l.count })),
+        preview: previewTitles,
+      },
+    },
+  ]);
 
   if (headlineItems.length) {
-    corners.push({
-      id: "headlines",
-      kind: "headlines",
-      label: "注目ニュース",
-      jingle: "corner",
-      text: "注目のニュースです。" + headlineItems.map((it, i) => sentence(it, `${i + 1}本目。`, 70)).join(" "),
-    });
+    addCorner({ id: "headlines", kind: "headlines", label: "注目ニュース", jingle: "corner" }, [
+      { text: "注目のニュースです。", slide: { kind: "corner", id: "headlines", label: "注目ニュース", intro: "今日の注目の記事です", count: headlineItems.length, sources: [] } },
+      ...headlineItems.map((it, i) => ({
+        text: (i > 0 ? " " : "") + sentence(it, `${i + 1}本目。`, 70),
+        slide: itemSlide(it, i + 1, headlineItems.length, "注目ニュース"),
+      })),
+    ]);
   }
 
   if (recommend) {
-    corners.push({
-      id: "recommend",
-      kind: "recommend",
-      label: "今日のおすすめ",
-      jingle: "corner",
-      text: recommendText(recommend),
-    });
+    addCorner({ id: "recommend", kind: "recommend", label: "今日のおすすめ", jingle: "corner" }, [
+      {
+        text: recommendText(recommend),
+        slide: {
+          kind: "recommend",
+          heading: hasJapanese(recommend.title) ? cleanTitle(recommend.title) : cleanTitle(recommend.title_ja ?? ""),
+          what: recommend.what ?? "",
+          use: recommend.use ?? "",
+          apply: recommend.apply ?? "",
+          projects: recommend.projects ?? [],
+        },
+      },
+    ]);
   }
 
   for (const l of live) {
     const name = SHORT[l.id] ?? l.label;
+    const cornerSlide = { kind: "corner", id: l.id, label: l.label, intro: CATEGORY_INTRO[l.id] ?? "", count: l.count, sources: l.sources ?? [] };
     const shown = choose(l.items, per);
     if (!shown.length) {
       // 読める記事が無い。他のコーナーで読み終わっている場合は飛ばす。英語の記事が中心のときは、そのことだけを短く伝える
       if (l.items.some((it) => !spoken.has(keyOf(it)))) {
-        corners.push({
-          id: l.id,
-          kind: "category",
-          label: l.label,
-          jingle: "corner",
-          text: `${name}のコーナーです。新着は${l.count}件ですが、英語の記事が中心です。詳しくは、サイトでご覧ください。`,
-        });
+        addCorner({ id: l.id, kind: "category", label: l.label, jingle: "corner" }, [
+          { text: `${name}のコーナーです。新着は${l.count}件ですが、英語の記事が中心です。詳しくは、サイトでご覧ください。`, slide: cornerSlide },
+        ]);
       }
       continue;
     }
     const rest = l.count - shown.length;
-    corners.push({
-      id: l.id,
-      kind: "category",
-      label: l.label,
-      jingle: "corner",
-      text:
-        `${name}のコーナーです。${CATEGORY_INTRO[l.id] ?? ""}新着は${l.count}件。` +
-        shown.map((it, i) => sentence(it, LEAD[Math.min(i, LEAD.length - 1)], 60, { withUse: false })).join(" ") +
-        (rest > 0 ? ` ほかにも、${rest}件あります。` : ""),
-    });
+    addCorner({ id: l.id, kind: "category", label: l.label, jingle: "corner" }, [
+      { text: `${name}のコーナーです。${CATEGORY_INTRO[l.id] ?? ""}新着は${l.count}件。`, slide: cornerSlide },
+      ...shown.map((it, i) => ({
+        text: (i > 0 ? " " : "") + sentence(it, LEAD[Math.min(i, LEAD.length - 1)], 60, { withUse: false }),
+        slide: itemSlide(it, i + 1, shown.length, l.label),
+      })),
+      ...(rest > 0 ? [{ text: ` ほかにも、${rest}件あります。`, slide: cornerSlide }] : []),
+    ]);
   }
 
   // 今日の用語ひとこと: 読んだ記事に出てきた用語のうち、説明のあるものを最大2つ(AI がまとめた説明であることを伝える)
@@ -365,15 +398,14 @@ export function buildRadioProgram({
     if (terms.length >= 2) break;
   }
   if (terms.length) {
-    corners.push({
-      id: "glossary",
-      kind: "glossary",
-      label: "今日の用語ひとこと",
-      jingle: "corner",
-      text:
-        "今日の用語ひとことです。ここまでに出てきた言葉を、AIがやさしくまとめました。" +
-        terms.map((t, i) => `${i === 0 ? "まず" : "もうひとつ"}、${t.term}。${endSentence(t.meaning)}`).join(" "),
-    });
+    addCorner({ id: "glossary", kind: "glossary", label: "今日の用語ひとこと", jingle: "corner" }, [
+      {
+        text:
+          "今日の用語ひとことです。ここまでに出てきた言葉を、AIがやさしくまとめました。" +
+          terms.map((t, i) => `${i === 0 ? "まず" : "もうひとつ"}、${t.term}。${endSentence(t.meaning)}`).join(" "),
+        slide: { kind: "term", terms },
+      },
+    ]);
   }
 
   // 今日のおさらい: 耳で聞くと振り返れないので、読んだ話題を最後にもう一度まとめる
@@ -382,26 +414,25 @@ export function buildRadioProgram({
     .filter(Boolean)
     .slice(0, 3);
   if (recapTitles.length >= 2) {
-    corners.push({
-      id: "recap",
-      kind: "recap",
-      label: "今日のおさらい",
-      jingle: "corner",
-      text:
-        `今日のおさらいです。${recapTitles.map((t) => `「${t}」。`).join("")}以上を、お伝えしました。` +
-        "気になった話題は、サイトのボードに入れておくと、あとで読み返せます。",
-    });
+    addCorner({ id: "recap", kind: "recap", label: "今日のおさらい", jingle: "corner" }, [
+      {
+        text:
+          `今日のおさらいです。${recapTitles.map((t) => `「${t}」。`).join("")}以上を、お伝えしました。` +
+          "気になった話題は、サイトのボードに入れておくと、あとで読み返せます。",
+        slide: { kind: "recap", titles: recapTitles },
+      },
+    ]);
   }
 
-  corners.push({
-    id: "close",
-    kind: "close",
-    label: "エンディング",
-    jingle: "close",
-    text: `以上、${spokenDate(date)}の放送をお届けしました。記事の詳しい内容は、サイトでご覧いただけます。それでは、また次の放送で。`,
-  });
+  addCorner({ id: "close", kind: "close", label: "エンディング", jingle: "close" }, [
+    {
+      text: `以上、${spokenDate(date)}の放送をお届けしました。記事の詳しい内容は、サイトでご覧いただけます。それでは、また次の放送で。`,
+      slide: { kind: "close", date },
+    },
+  ]);
 
   for (const c of corners) {
+    for (const p of c.parts) p.speech = normalizeForSpeech(p.text);
     c.speech = normalizeForSpeech(c.text);
     c.seconds = estimateSeconds(c.speech);
   }

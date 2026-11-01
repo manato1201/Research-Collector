@@ -35,7 +35,7 @@ const store = {
   },
 };
 
-let queue = []; // [{label, chunks: string[]}]
+let queue = []; // [{label, chunks: [{text, slide}]}]  slide = そのとき画面に出す内容(無ければ null)
 let pos = { c: 0, k: 0 };
 let token = 0; // 古いコールバックを無視する
 let status = "idle"; // idle | playing | paused
@@ -60,6 +60,7 @@ export function snapshot() {
     title,
     chapter: queue[pos.c]?.label ?? "",
     chapterIndex: pos.c,
+    slide: queue[pos.c]?.chunks[pos.k]?.slide ?? null, // いま読んでいる部分の画面(ラジオの画面が使う)
     chapterCount: total,
     rate,
     voiceName,
@@ -101,7 +102,7 @@ function advance() {
 
 function speakCurrent() {
   const ch = queue[pos.c];
-  const text = ch?.chunks[pos.k];
+  const text = ch?.chunks[pos.k]?.text;
   if (text === undefined) return finish();
   // 章の最初では、ジングルを鳴らしてから話し始める(効果音がオフ・鳴らせない端末では、すぐ話す)
   if (pos.k === 0 && ch.jingle && sfxOn) {
@@ -136,11 +137,22 @@ function speakChunk(text) {
   synth.speak(u);
 }
 
-/** chapters: [{label, text}]。空の章は飛ばす。読み始めたら true。 */
+/**
+ * 章の読み上げ単位。parts(話す内容 + 画面の内容の組)があれば、部分ごとに分けて、各かたまりに画面の内容を付ける。
+ * 無ければ、text だけを分ける(画面の内容は無し)。
+ */
+function chunksOf(c) {
+  if (Array.isArray(c.parts) && c.parts.length) {
+    return c.parts.flatMap((p) => splitChunks(p.text).map((text) => ({ text, slide: p.slide ?? null })));
+  }
+  return splitChunks(c.text).map((text) => ({ text, slide: null }));
+}
+
+/** chapters: [{label, text} または {label, parts: [{text, slide}]}]。空の章は飛ばす。読み始めたら true。 */
 export function read({ title: t, chapters, startAt = 0 }) {
   if (!supported) return false;
   const q = (chapters ?? [])
-    .map((c) => ({ label: c.label, jingle: c.jingle ?? null, chunks: splitChunks(c.text) }))
+    .map((c) => ({ label: c.label, jingle: c.jingle ?? null, chunks: chunksOf(c) }))
     .filter((c) => c.chunks.length > 0);
   if (q.length === 0) return false;
   token++;

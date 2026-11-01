@@ -4,11 +4,12 @@
 // 読み上げはブラウザの音声(player.js)。番組表から、聴きたいコーナーの頭へ飛べる。
 
 import { navigate } from "./router.js";
-import { CATEGORIES, api, catLabel, cleanup, isMuted, loadBoard, loadInsights, projectsFor, state } from "./store.js";
+import { AuthError, CATEGORIES, api, catLabel, cleanup, isMuted, loadBoard, loadInsights, projectsFor, state } from "./store.js";
 import { pickRecommendation } from "./recommend.js";
 import { crumbs, h, jstNow, mount, renderEmpty, renderSkeleton } from "./util.js";
 import * as player from "./player.js";
 import { buildRadioProgram, formatClock } from "./radio-script.js";
+import { buildStage } from "./stage.js";
 
 /**
  * 今日のおすすめ(1本)を選ぶ。ウォッチワード・関連プロジェクトに当てはまるものを優先する。
@@ -49,6 +50,7 @@ export async function programFromEpisodes(episodes, date) {
     label: catLabel(c),
     count: byCat[c].data.count ?? byCat[c].data.items?.length ?? 0,
     items: byCat[c].data.items ?? [],
+    sources: byCat[c].data.sources ?? [], // 出どころ別の件数(ラジオの画面の図に使う)
   }));
   // あいさつの時間帯。今日の放送は今の時刻、過去の日付は昼の扱い
   const today = jstNow().toISOString().slice(0, 10);
@@ -74,7 +76,13 @@ export async function programFromEpisodes(episodes, date) {
 
 /** プレーヤーに渡す形(章 = コーナー。ジングルつき)。 */
 export function programChapters(program) {
-  return program.corners.map((c) => ({ label: c.label, text: c.speech, jingle: c.jingle }));
+  // parts: 話す内容と、そのとき画面に出す内容(slide)の組。プレーヤーが、読み上げに合わせて画面を切り替えられる
+  return program.corners.map((c) => ({
+    label: c.label,
+    text: c.speech,
+    jingle: c.jingle,
+    parts: c.parts.map((p) => ({ text: p.speech, slide: p.slide })),
+  }));
 }
 
 const KIND_LABEL = { open: "OP", headlines: "注目", recommend: "おすすめ", category: "コーナー", glossary: "用語", recap: "まとめ", close: "ED" };
@@ -83,9 +91,11 @@ export async function pageRadio(view, params) {
   mount(view, renderSkeleton());
   const wanted = params.get("d");
   const dateQuery = wanted && /^\d{4}-\d{2}-\d{2}$/.test(wanted) ? wanted : "latest";
-  const [{ date, episodes }, datesRes] = await Promise.all([
+  const [{ date, episodes }, datesRes, weekly] = await Promise.all([
     api(`/api/episodes?kind=daily&date=${dateQuery}`),
     api("/api/episodes/dates?kind=daily"),
+    // 7日間の推移の図(おさらいの画面)に使う。取れなくても、ラジオは使える
+    api("/api/episodes?kind=weekly&date=latest").then((r) => r.episodes?.find((e) => e.category === null) ?? null).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),
     loadBoard(),
   ]);
 
@@ -99,6 +109,7 @@ export async function pageRadio(view, params) {
   }
 
   const chapters = programChapters(program);
+  const stage = buildStage({ program, weekly });
 
   // 番組表: コーナーごとの開始時刻(速度 1 倍の目安)
   let offset = 0;
@@ -200,6 +211,7 @@ export async function pageRadio(view, params) {
     player.supported
       ? null
       : h("p", { class: "tool-note" }, "このブラウザは読み上げに対応していないため、再生できません。原稿は下で読めます。"),
+    stage.el,
     h("h2", { class: "guide-title" }, "番組表"),
     guide,
     reducedMotion ? h("p", { class: "fig-note" }, "動きを減らす設定のため、番組の原稿を開いています。音声を使わずに、原稿だけで読めます。") : null,
@@ -224,4 +236,6 @@ export async function pageRadio(view, params) {
   };
   mark(player.snapshot());
   cleanup.push(player.onChange(mark));
+  stage.update(player.snapshot());
+  cleanup.push(player.onChange((snap) => stage.update(snap)));
 }

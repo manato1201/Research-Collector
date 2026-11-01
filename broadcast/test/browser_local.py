@@ -484,6 +484,39 @@ with sync_playwright() as p:
     check("radio: a recap corner closes the program before the ending",
           page.locator(".guide-row", has_text="今日のおさらい").count() == 1)
 
+    # --- ラジオの画面(ステージ)と、図
+    check("stage: shown before playing, with a hint and an overview figure",
+          page.locator(".stage .stage-hint").count() == 1 and page.locator(".stage svg[role=img]").count() >= 1)
+    check("stage: the figure is drawn from real counts (labelled bars, no empty chart)",
+          page.locator(".stage .fig .bar").count() >= 1 and "分野別" in page.inner_text(".stage .fig h3"))
+    if page.locator("#player-toggle").count():
+        page.locator(".guide-row", has_text="注目ニュース").locator("button").click()
+        page.wait_for_selector(".stage .stage-hint", state="detached", timeout=5000)
+        check("stage: follows the player (the corner being read is shown, with its position)",
+              "注目ニュース" in page.inner_text(".stage-kicker") and "/" in page.inner_text(".stage-progress"))
+        # 記事のカード: 実際の台本の項目と同じ形の slide を、プレーヤーへ直接渡して描画を確かめる
+        title = page.evaluate("document.querySelector('.radio-hero time').textContent") + " の放送"
+        page.evaluate("""(t) => import('/player.js').then((p) => p.read({ title: t, chapters: [{ label: '注目ニュース', parts: [{ text: 'テストの読み上げです。', slide: {
+            kind: 'item', corner: '注目ニュース', n: 1, of: 3, heading: 'テスト用の見出し', what: 'かんたんな概要です。', use: '何かが分かります。',
+            term: { term: '用語X', meaning: 'やさしい説明です。' }, ai: true, source: 'zenn', url: 'https://example.com/a', article: null } }] }] }))""", title)
+        page.wait_for_selector(".stage-title:has-text('テスト用の見出し')", timeout=5000)
+        st = page.inner_text(".stage")
+        check("stage: an item card shows heading, plain summary, what you learn, term, source and an AI label",
+              all(k in st for k in ("テスト用の見出し", "かんたんな概要です。", "分かること", "用語X", "やさしい説明です。", "zenn", "AIの解説")), st[:200])
+        link = page.locator(".stage a.btn", has_text="原文へ")
+        check("stage: the original-article link is external, noopener and http(s)",
+              link.count() == 1 and link.get_attribute("target") == "_blank" and "noopener" in (link.get_attribute("rel") or "")
+              and (link.get_attribute("href") or "").startswith("https://"))
+        page.evaluate("import('/player.js').then((p) => p.stop())")
+        page.wait_for_selector(".stage .stage-hint", timeout=5000)
+        check("stage: returns to the hint when playback stops", page.locator(".stage .stage-hint").count() == 1)
+    page.goto(BASE + "/")
+    page.wait_for_selector(".lanes")
+    check("home: an overview figure of today's counts by category",
+          page.locator("#ov-title").count() == 1 and page.locator(".panel .fig .bar").count() >= 1)
+    page.goto(BASE + "/radio")
+    page.wait_for_selector(".guide-row")
+
     # --- テーマ
     before = page.evaluate("document.documentElement.getAttribute('data-theme')")
     page.click("#theme-btn")

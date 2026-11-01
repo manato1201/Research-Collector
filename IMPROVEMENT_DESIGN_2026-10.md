@@ -100,3 +100,32 @@ TakayuStudio 系リファレンス(Prompt Shelf の出典・権利の扱い、�
 ## 外部リソースの追補(2026-10-22)
 
 音声ファイルの生成(audio-studio-mcp)・動画の工程分け・Worker の点検の反映案は、[ResearchBroadcast_DESIGN.md](ResearchBroadcast_DESIGN.md) の同名の節にまとめた。判断は [EXTERNAL_RESOURCES_2026-10-22.md](../EXTERNAL_RESOURCES_2026-10-22.md)。
+
+
+---
+
+## 追補: ASCII モチーフ(2026-10-27・提案/未実装)
+
+元: [ASCII_MOTIF_MAP_2026-10-27.md](../ASCII_MOTIF_MAP_2026-10-27.md)(全体の割り当てと実装方式)。上流は [stackedlol/ascii-sharks](https://github.com/stackedlol/ascii-sharks)(MIT)。
+
+| 項目 | 内容 |
+|---|---|
+| モチーフ | 植物(木の実・落ち葉) |
+| 選んだ理由 | 収集=拾い集める |
+| 使う色 | 橙・シアン(紫は主操作のまま)(既存トークンのみ・新色は足さない) |
+| 出す場所 | 結果なし・収集中(動きは空・待機の状態だけ=P8) |
+| 実装系統 | C. Drift |
+
+- 本文・操作部品には出さない。`prefers-reduced-motion` では静止画1枚にする。
+- 上流の動作は確認済み(2026-10-30: 型検査・ビルド成功、60fps)。未確認: 各プロジェクトへ組み込んだときの負荷。
+
+
+---
+
+## 追補: 第4弾の外部資料(2026-10-30・提案/未実装)
+
+元: [EXTERNAL_RESOURCES_2026-10-30.md](../EXTERNAL_RESOURCES_2026-10-30.md)。
+
+- **Z22**: 収集中の表示に、**クローラーが文書を這い、取れた箇所を囲む**演出。概念だけ(作品は NFT 向け)。`prefers-reduced-motion` では静止にする。
+- **Z31 PDFMathTranslate**(AGPL-3.0): 論文 PDF をレイアウトを保って翻訳。手元の道具としてのみ使い、**公開サービスに組み込まない**。
+- **Z27**: 収集した記事の再ランキングに、Yes/No の点数を使う案(LocalLLMHarness の A7)。

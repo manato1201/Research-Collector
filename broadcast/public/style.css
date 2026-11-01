@@ -1697,3 +1697,110 @@ body[data-offline="1"] .status-bar::after {
   font-size: 0.78rem;
   color: var(--muted);
 }
+
+/* ---------- ラジオの画面(ステージ): 読み上げに合わせて、いま話している話題のカードを出す ---------- */
+.stage {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem 1.1rem;
+  margin-top: 1rem;
+  min-height: 14rem;
+}
+.stage-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.stage-kicker {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.stage-hint {
+  color: var(--text-muted);
+  font-size: 0.88rem;
+  margin-bottom: 0.75rem;
+}
+.stage-big {
+  font-family: var(--serif);
+  font-size: 2.4rem;
+  line-height: 1.1;
+  margin-bottom: 0.5rem;
+}
+.stage-big small {
+  font-family: var(--sans);
+  font-size: 0.9rem;
+  color: var(--text-muted);
+  margin-left: 0.35rem;
+}
+.stage-title {
+  font-size: 1.25rem;
+  line-height: 1.4;
+  margin: 0.35rem 0 0.6rem;
+}
+.stage-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
+.stage-what {
+  font-size: 1rem;
+  line-height: 1.8;
+  margin-bottom: 0.5rem;
+}
+.stage-use,
+.stage-term {
+  font-size: 0.92rem;
+  line-height: 1.7;
+  margin-bottom: 0.4rem;
+}
+.stage-term {
+  background: var(--surface2);
+  border-radius: 8px;
+  padding: 0.45rem 0.7rem;
+}
+.stage-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+.stage-points {
+  margin: 0.4rem 0 0.8rem 1.2rem;
+  line-height: 1.8;
+}
+.stage-terms dt {
+  font-weight: 700;
+  margin-top: 0.5rem;
+}
+.stage-terms dd {
+  margin: 0 0 0.25rem;
+  line-height: 1.7;
+}
+.stage .fig {
+  margin-top: 0.75rem;
+}
+.stage .fig h3 {
+  font-size: 0.82rem;
+}
+@media (max-width: 640px) {
+  .stage {
+    padding: 0.85rem 0.85rem 1rem;
+  }
+  .stage-title {
+    font-size: 1.1rem;
+  }
+}
+
+/* ---------- ホームの「今日のようす」(図) ---------- */
+.panel .fig:first-of-type {
+  margin-top: 0;
+}
