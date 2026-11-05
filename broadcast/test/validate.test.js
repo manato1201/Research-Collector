@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { BOARD_IMPORT_MAX, SOURCE_KINDS, validateBoardImport, resolveCategories, buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
+import { BOARD_IMPORT_MAX, EXPORT_TABLES, SOURCE_KINDS, TIDY_BUCKETS, isRealDate, parseTidy, validateBoardImport, validateMarkInput, resolveCategories, buildArticleQuery, validateArticle, validateIngest, validateReport, validateWatchItem } from "../src/validate.js";
 
 const good = () => ({
   url_hash: "0123456789abcdef",
@@ -353,4 +353,52 @@ test("SOURCE_KINDS: game media is its own kind and is never counted as 'other'",
   assert.deepEqual(q.params, ["denfami", "gamemakers"]);
   const other = buildArticleQuery(new URLSearchParams("kind=other"));
   assert.ok(other.params.includes("denfami") && other.params.includes("gamemakers"));
+});
+
+test("isRealDate: only dates that exist", () => {
+  assert.ok(isRealDate("2026-11-06"));
+  assert.ok(isRealDate("2028-02-29"));
+  assert.ok(!isRealDate("2026-02-29"));
+  assert.ok(!isRealDate("2026-13-01"));
+  assert.ok(!isRealDate("2026-1-1"));
+  assert.ok(!isRealDate("2026-11-06T00:00"));
+  assert.ok(!isRealDate(20261106));
+  assert.ok(!isRealDate(null));
+});
+
+test("validateMarkInput: changes only what is written; rejects empty or wrong types", () => {
+  assert.deepEqual(validateMarkInput({ pinned: true }), { ok: true, pinned: true });
+  assert.deepEqual(validateMarkInput({ remind_on: "2026-11-07" }), { ok: true, remind_on: "2026-11-07" });
+  assert.deepEqual(validateMarkInput({ remind_on: null }), { ok: true, remind_on: null });
+  assert.deepEqual(validateMarkInput({ pinned: false, remind_on: null }), { ok: true, pinned: false, remind_on: null });
+  assert.equal(validateMarkInput({}).error, "nothing_to_change");
+  assert.equal(validateMarkInput({ other: 1 }).error, "nothing_to_change");
+  assert.equal(validateMarkInput({ pinned: "yes" }).error, "bad_pinned");
+  assert.equal(validateMarkInput({ pinned: 1 }).error, "bad_pinned");
+  assert.equal(validateMarkInput({ remind_on: "2026-02-30" }).error, "bad_remind_on");
+  assert.equal(validateMarkInput({ remind_on: "tomorrow" }).error, "bad_remind_on");
+  assert.equal(validateMarkInput({ remind_on: 5 }).error, "bad_remind_on");
+  assert.equal(validateMarkInput([]).error, "body_must_be_an_object");
+  assert.equal(validateMarkInput(null).error, "body_must_be_an_object");
+});
+
+test("parseTidy: defaults, bounds, platform exclusion", () => {
+  const d = parseTidy(new URLSearchParams(""));
+  assert.deepEqual(d, { ok: true, days: 7, limit: 30, exclude: [] });
+  assert.equal(parseTidy(new URLSearchParams("days=30&limit=200")).days, 30);
+  assert.equal(parseTidy(new URLSearchParams("limit=0")).limit, 0); // 件数だけ
+  assert.equal(parseTidy(new URLSearchParams("days=0")).error, "bad_days");
+  assert.equal(parseTidy(new URLSearchParams("days=91")).error, "bad_days");
+  assert.equal(parseTidy(new URLSearchParams("days=x")).error, "bad_days");
+  assert.equal(parseTidy(new URLSearchParams("days=1.5")).error, "bad_days");
+  assert.equal(parseTidy(new URLSearchParams("limit=201")).error, "bad_limit");
+  assert.equal(parseTidy(new URLSearchParams("limit=-1")).error, "bad_limit");
+  assert.deepEqual(parseTidy(new URLSearchParams("exclude_platforms=a, b,,c")).exclude, ["a", "b", "c"]);
+  assert.equal(parseTidy(new URLSearchParams(`exclude_platforms=${"x".repeat(41)}`)).error, "bad_exclude_platforms");
+  assert.equal(parseTidy(new URLSearchParams(`exclude_platforms=${Array.from({ length: 60 }, (_, i) => `p${i}`).join(",")}`)).exclude.length, 40);
+  assert.deepEqual(TIDY_BUCKETS, [7, 14, 30]);
+});
+
+test("EXPORT_TABLES includes marks (so the daily backup keeps pins and reminders)", () => {
+  assert.ok(EXPORT_TABLES.includes("marks"));
 });

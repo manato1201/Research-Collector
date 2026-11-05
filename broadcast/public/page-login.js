@@ -21,6 +21,7 @@ export function pageLogin(view, params) {
           await api("/api/login", { method: "POST", body: { password: input.value } });
           state.session = { ...state.session, authenticated: true, via: "session" };
           state.boardLoaded = false;
+          state.marksLoaded = false;
           input.value = "";
           updateAuthUi();
           const next = params.get("next");

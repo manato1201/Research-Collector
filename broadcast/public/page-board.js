@@ -2,8 +2,8 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { fadeIn, h, jstToday, mount, renderSkeleton, toast } from "./util.js";
-import { AuthError, BOARD_LABELS, BOARD_ORDER, allCategoryIds, api, catLabel, state } from "./store.js";
-import { renderItem } from "./components.js";
+import { AuthError, BOARD_LABELS, BOARD_ORDER, allCategoryIds, api, catLabel, excludeParam, loadMarks, state } from "./store.js";
+import { renderItem, renderMarkItems } from "./components.js";
 import { navigate } from "./router.js";
 
 // ------------------------------------------------------------------ ページ: ボード
@@ -94,7 +94,12 @@ function boardTransfer(items, overwriteBox) {
 
 export async function pageBoard(view, params) {
   mount(view, renderSkeleton());
-  const data = await api("/api/board");
+  // 未読の件数(整理の入口に使う)。取れなくても、ボードは表示する
+  const [data, , tidy] = await Promise.all([
+    api("/api/board"),
+    loadMarks(true),
+    api(`/api/tidy?days=7&limit=0${excludeParam()}`).catch((e) => (e instanceof AuthError ? Promise.reject(e) : null)),
+  ]);
   state.board = new Map(data.items.map((i) => [i.url_hash, { state: i.state, note: i.note }]));
   state.boardLoaded = true;
 
@@ -129,6 +134,37 @@ export async function pageBoard(view, params) {
     return box;
   };
 
+  // ピン留め・見直す日(整理で付ける。ボードの状態とは別)。カテゴリの絞り込みにも従う
+  const inCat = (e) => !catFilter || (e.article?.categories ?? []).includes(catFilter);
+  const reminders = state.markList.filter((e) => e.remind_on && inCat(e)); // 見直す日の早い順(サーバーが並べる)
+  const pins = state.markList.filter((e) => e.pinned && inCat(e));
+  const markSection = (id, title, hint, entries) =>
+    h(
+      "section",
+      { class: "panel", "aria-labelledby": id },
+      h("h2", { id }, title, h("span", { class: "lane-count num" }, String(entries.length))),
+      h("p", { class: "sub" }, hint),
+      renderMarkItems(entries),
+    );
+
+  // 件数のまとめ(未読は、整理の API から。取れなければ出さない)
+  const countOf = (s) => data.items.filter((i) => i.state === s).length;
+  const summary = h(
+    "p",
+    { class: "tidy-stats", "aria-label": "件数" },
+    tidy ? ["未読 ", h("b", { class: "num" }, String(tidy.unread)), " ・ "] : null,
+    ...["reading", "try", "hold", "read"].flatMap((s, i) => [i ? " ・ " : null, `${BOARD_LABELS[s]} `, h("b", { class: "num" }, String(countOf(s)))]),
+    " ・ ピン ",
+    h("b", { class: "num" }, String(state.markList.filter((e) => e.pinned).length)),
+    " ・ 見直し予定 ",
+    h("b", { class: "num" }, String(state.markList.filter((e) => e.remind_on).length)),
+  );
+  const tidyLink = h(
+    "a",
+    { class: "btn", href: "/tidy", "data-link": "" },
+    tidy && tidy.stale > 0 ? `整理する(7日以上の未読 ${tidy.stale}件)` : "整理を開く",
+  );
+
   const chip = (label, key) =>
     h(
       "button",
@@ -150,7 +186,18 @@ export async function pageBoard(view, params) {
       chip("すべて", null),
       ...allCategoryIds().map((c) => chip(catLabel(c), c)),
     ),
+    summary,
+    h("div", { class: "row-controls" }, tidyLink),
     h("div", { class: "lanes" }, ...BOARD_ORDER.map(lane)),
+    reminders.length
+      ? markSection(
+          "board-remind",
+          "見直し",
+          "見直す日を決めた記事です。日付になると「見直し」と出ます(通知は出ません)。",
+          reminders,
+        )
+      : null,
+    pins.length ? markSection("board-pin", "ピン留め", "整理の候補から外して、残している記事です。", pins) : null,
     h("h2", { class: "guide-title" }, "持ち出し"),
     h(
       "p",

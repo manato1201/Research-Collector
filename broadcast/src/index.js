@@ -18,7 +18,9 @@
 //   GET  /api/watchwords    ウォッチワードごとの直近7日の件数と新着
 //   GET  /api/prefs / PUT /api/prefs/{key}   設定(ウォッチワード・関連プロジェクト・非表示の収集元)
 //   GET  /api/sources       収集元ごとの件数(非表示の設定に使う)
-//   POST /api/board/bulk    ボードをまとめて更新(既読にする等。最大200件)
+//   POST /api/board/bulk    ボードをまとめて更新(既読にする等。最大200件。only: "read" なら、既読のものだけ未読に戻す=取り消し)
+//   GET  /api/marks / PUT・DELETE /api/marks/{url_hash}   ピンと「見直す日」(ボードの状態とは別の目印)
+//   GET  /api/tidy?days=7&limit=30   整理: しばらく開いていない未読(件数と、古い順の記事)
 //   POST /api/board/import  ボードの読み込み(書き出した JSON から。既定では既存の状態を変えない。最大500件)
 //   GET  /api/export?table=…&offset=…   バックアップ用の書き出し(Bearer のみ。ページごと)
 //   GET  /api/status        件数(URL単位)・カテゴリ別・直近の取り込み・失敗した収集元
@@ -53,6 +55,9 @@ import {
   buildArticleQuery,
   buildEpisodeQuery,
   isUrlHash,
+  parseTidy,
+  TIDY_BUCKETS,
+  validateMarkInput,
   EXPORT_TABLES,
   escapeLike,
   MAX_BODY_BYTES,
@@ -169,6 +174,17 @@ async function route(request, env, url) {
     return withAuth(request, env, url, true, () => handleBoardWrite(request, env, board[1], method));
   }
 
+  const mark = /^\/api\/marks(?:\/([^/]+))?$/.exec(pathname);
+  if (mark) {
+    if (mark[1] === undefined) {
+      if (method !== "GET") return methodNotAllowed("GET");
+      return withAuth(request, env, url, false, () => handleMarksList(env));
+    }
+    if (!["PUT", "DELETE"].includes(method)) return methodNotAllowed("PUT, DELETE");
+    if (!isUrlHash(mark[1])) return json({ error: "bad_url_hash" }, 400);
+    return withAuth(request, env, url, true, () => handleMarkWrite(request, env, mark[1], method));
+  }
+
   const report = /^\/api\/reports\/([^/]+)$/.exec(pathname);
   if (report) {
     if (method !== "GET") return methodNotAllowed("GET");
@@ -194,6 +210,7 @@ async function route(request, env, url) {
     "/api/status": () => handleStatus(env),
     "/api/reports": () => handleReportList(url, env),
     "/api/watch": () => handleWatch(env),
+    "/api/tidy": () => handleTidy(url, env),
   };
   if (reads[pathname]) {
     if (method !== "GET") return methodNotAllowed("GET");
@@ -437,6 +454,8 @@ async function handleIngest(request, env) {
   // 記事と一緒に、持ち主を失った解説も消す(board は、記事が消えてもメモを残す設計なので消さない)
   if ((purged.meta?.changes ?? 0) > 0) {
     await env.DB.prepare("DELETE FROM insights WHERE url_hash NOT IN (SELECT url_hash FROM articles)").run();
+    // ピン・見直す日も、記事が無くなったら意味が無いので消す(失敗しても取り込みは続ける: marks の移行前でも動く)
+    await env.DB.prepare("DELETE FROM marks WHERE url_hash NOT IN (SELECT url_hash FROM articles)").run().catch(() => {});
   }
 
   // 古い検知(ウォッチ)も、記事と同じ保持期間で消す
@@ -937,11 +956,14 @@ async function handleBoardBulk(request, env) {
   }
   const v = validateBoardInput({ state: body.state, note: "" });
   if (!v.ok) return json({ error: v.error }, 400);
+  // only: "read" = 「既読になっているものだけ」未読に戻す(まとめて既読にした操作の取り消し。あとで 読む / 試す / 保留 にした記事は消さない)
+  if (body.only !== undefined && !(body.only === "read" && v.state === "unread")) return json({ error: "bad_only" }, 400);
 
   const nowIso = new Date().toISOString();
   let statements;
   if (v.state === "unread") {
-    statements = hashes.map((h) => env.DB.prepare("DELETE FROM board WHERE url_hash = ?").bind(h));
+    const del = body.only === "read" ? "DELETE FROM board WHERE url_hash = ? AND state = 'read'" : "DELETE FROM board WHERE url_hash = ?";
+    statements = hashes.map((h) => env.DB.prepare(del).bind(h));
   } else if (v.state === "read") {
     // 「まとめて既読」は、すでに 読む / 試す / 保留 に入れた記事の状態を上書きしない
     statements = hashes.map((h) =>
@@ -1002,6 +1024,114 @@ async function handleBoardImport(request, env) {
     added: v.items.length - conflicts,
     existing: conflicts,
     updated: v.overwrite ? conflicts : 0,
+  });
+}
+
+// ------------------------------------------------------------------ ピン・見直す日・整理(外部資料 第5弾 Z35)
+
+/** marks の一覧に付ける、記事の項目(記事が保持期間を過ぎて消えていれば null)。 */
+const markArticle = (r) =>
+  r.url
+    ? {
+        url_hash: r.url_hash,
+        url: r.url,
+        title: r.title,
+        platform: r.platform,
+        categories: JSON.parse(r.categories),
+        published: r.published,
+        collected_at: r.collected_at,
+        summary: r.summary,
+        review: r.review === 1,
+      }
+    : null;
+
+async function handleMarksList(env) {
+  const rows = await env.DB.prepare(
+    `SELECT m.url_hash, m.pinned, m.remind_on, m.updated_at,
+            a.url, a.title, a.platform, a.categories, a.published, a.collected_at, a.summary, a.review
+     FROM marks m LEFT JOIN articles a ON a.url_hash = m.url_hash
+     ORDER BY m.pinned DESC, m.remind_on IS NULL, m.remind_on ASC, m.updated_at DESC LIMIT 500`,
+  ).all();
+  return json({
+    items: rows.results.map((r) => ({
+      url_hash: r.url_hash,
+      pinned: r.pinned === 1,
+      remind_on: r.remind_on,
+      updated_at: r.updated_at,
+      article: markArticle(r),
+    })),
+  });
+}
+
+async function handleMarkWrite(request, env, urlHash, method) {
+  const nowIso = new Date().toISOString();
+  if (method === "DELETE") {
+    await env.DB.prepare("DELETE FROM marks WHERE url_hash = ?").bind(urlHash).run();
+    return json({ ok: true, url_hash: urlHash, pinned: false, remind_on: null });
+  }
+  const text = await readBodyLimited(request, 1_000);
+  if (text === null) return json({ error: "payload_too_large" }, 413);
+  let body;
+  try {
+    body = JSON.parse(text);
+  } catch {
+    return json({ error: "invalid_json" }, 400);
+  }
+  const v = validateMarkInput(body);
+  if (!v.ok) return json({ error: v.error }, 400);
+
+  // 書いた項目だけ変える。いまの値と合わせて、どちらも無くなったら行ごと消す
+  const cur = await env.DB.prepare("SELECT pinned, remind_on FROM marks WHERE url_hash = ?").bind(urlHash).first();
+  const pinned = Object.hasOwn(v, "pinned") ? v.pinned : cur?.pinned === 1;
+  const remindOn = Object.hasOwn(v, "remind_on") ? v.remind_on : (cur?.remind_on ?? null);
+  if (!pinned && remindOn === null) {
+    await env.DB.prepare("DELETE FROM marks WHERE url_hash = ?").bind(urlHash).run();
+    return json({ ok: true, url_hash: urlHash, pinned: false, remind_on: null });
+  }
+  await env.DB.prepare(
+    `INSERT INTO marks (url_hash, pinned, remind_on, updated_at) VALUES (?, ?, ?, ?)
+     ON CONFLICT(url_hash) DO UPDATE SET pinned = excluded.pinned, remind_on = excluded.remind_on, updated_at = excluded.updated_at`,
+  ).bind(urlHash, pinned ? 1 : 0, remindOn, nowIso).run();
+  return json({ ok: true, url_hash: urlHash, pinned, remind_on: remindOn, updated_at: nowIso });
+}
+
+/**
+ * 整理: しばらく開いていない未読(ボードに入っていない・ピンも見直す日も付いていない記事)を、古い順に返す。
+ * days = 収集してから何日以上たったものを対象にするか。buckets = 7 / 14 / 30 日以上の件数(切り替えの目安)。
+ * limit = 0 なら件数だけ。
+ */
+async function handleTidy(url, env) {
+  const q = parseTidy(url.searchParams);
+  if (!q.ok) return json({ error: q.error }, 400);
+  const iso = (days) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 19) + "Z";
+  const unreadWhere =
+    "a.status = 'added' AND NOT EXISTS (SELECT 1 FROM board b WHERE b.url_hash = a.url_hash)" +
+    " AND NOT EXISTS (SELECT 1 FROM marks m WHERE m.url_hash = a.url_hash)" +
+    (q.exclude.length ? ` AND a.platform NOT IN (${q.exclude.map(() => "?").join(",")})` : "");
+
+  const cuts = [q.days, ...TIDY_BUCKETS].map(iso);
+  const counts = await env.DB.prepare(
+    `SELECT COUNT(*) AS unread,
+            COALESCE(SUM(a.collected_at < ?), 0) AS stale,
+            COALESCE(SUM(a.collected_at < ?), 0) AS d1,
+            COALESCE(SUM(a.collected_at < ?), 0) AS d2,
+            COALESCE(SUM(a.collected_at < ?), 0) AS d3
+     FROM articles a WHERE ${unreadWhere}`,
+  ).bind(...cuts, ...q.exclude).first();
+
+  let articles = [];
+  if (q.limit > 0 && (counts?.stale ?? 0) > 0) {
+    const list = await env.DB.prepare(
+      `SELECT a.* FROM articles a WHERE ${unreadWhere} AND a.collected_at < ? ORDER BY a.collected_at ASC LIMIT ?`,
+    ).bind(...q.exclude, cuts[0], q.limit).all();
+    articles = list.results.map(rowToArticle);
+  }
+  return json({
+    days: q.days,
+    unread: counts?.unread ?? 0,
+    stale: counts?.stale ?? 0,
+    buckets: Object.fromEntries(TIDY_BUCKETS.map((d, i) => [String(d), counts?.[`d${i + 1}`] ?? 0])),
+    articles,
   });
 }
 

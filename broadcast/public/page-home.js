@@ -2,7 +2,7 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { addDays, countUp, h, jstToday, mount, renderEmpty, renderSkeleton, shortDate } from "./util.js";
-import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, loadBoard, loadInsights, loadStatus, state, unmuted } from "./store.js";
+import { AuthError, CATEGORIES, EXTRA, api, catLabel, dot, excludeParam, isDue, loadBoard, loadInsights, loadStatus, state, unmuted } from "./store.js";
 import { buildTicker, itemsToChapters, markAllRead, openDrawer, readButton, renderInsightParts, renderItem } from "./components.js";
 import { navigate } from "./router.js";
 import { buildRecommendation, programChapters, programFromEpisodes } from "./page-radio.js";
@@ -157,6 +157,22 @@ export async function pageHome(view, params) {
   }
   const reco = buildRecoCard(buildRecommendation(recCandidates, recInsights));
 
+  // 見直す日になった記事(整理で「見直す日」を付けたもの)。通知は出さず、ここに出す
+  const dueArticles = unmuted(
+    state.markList.filter((i) => isDue(i) && i.article).map((i) => ({ ...i.article, url_hash: i.url_hash, other_categories: [] })),
+  );
+  const dueBox = dueArticles.length
+    ? h(
+        "section",
+        { class: "panel", "aria-labelledby": "due-title" },
+        h("h2", { id: "due-title" }, "今日見直すもの"),
+        h("ul", { class: "list" }, ...dueArticles.slice(0, 5).map((a) => renderItem(a, { showCategoryBadge: false }))),
+        dueArticles.length > 5
+          ? h("p", { class: "sub" }, h("a", { href: "/board", "data-link": "" }, `ほか${dueArticles.length - 5}件は、ボードで見られます`))
+          : null,
+      )
+    : null;
+
   const latestReport = status?.reports?.latest;
   const reportLink = latestReport
     ? h("a", { class: "btn", href: `/reports/${encodeURIComponent(`digest:${latestReport}`)}`, "data-link": "" }, `最新のレポート(${latestReport})`)
@@ -200,6 +216,7 @@ export async function pageHome(view, params) {
     ),
     buildTicker(tickerItems),
     reco,
+    dueBox,
     h("div", { class: "row-controls" }, dateSelect, readAll, radioLink, reportLink),
     hl,
     overview,

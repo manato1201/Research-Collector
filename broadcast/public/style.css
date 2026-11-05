@@ -1804,3 +1804,115 @@ body[data-offline="1"] .status-bar::after {
 .panel .fig:first-of-type {
   margin-top: 0;
 }
+
+/* ---------- 整理(しばらく開いていない未読を、1件ずつ片づける)・ピン・見直す日 ---------- */
+.badge.pin {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mark-box {
+  margin-top: 0.75rem;
+  align-items: center;
+}
+.mark-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-left: 0.4rem;
+}
+.mark-note {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.tidy-stats {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  margin: 0.5rem 0 1rem;
+}
+.tidy-stats b {
+  color: var(--text);
+  font-family: var(--mono);
+}
+.tidy-stage {
+  min-height: 11rem;
+}
+.tidy-card {
+  position: relative;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1rem 1.1rem 0.6rem;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: grab;
+}
+.tidy-card .row-controls {
+  user-select: auto;
+}
+.tidy-card[data-swipe="left"] {
+  border-color: var(--new);
+}
+.tidy-card[data-swipe="right"] {
+  border-color: var(--accent);
+}
+.tidy-hint {
+  position: absolute;
+  top: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  opacity: 0;
+}
+.tidy-hint.left {
+  left: 0.8rem;
+  color: var(--new);
+}
+.tidy-hint.right {
+  right: 0.8rem;
+  color: var(--accent);
+}
+.tidy-card[data-swipe="left-soft"] .tidy-hint.left,
+.tidy-card[data-swipe="left"] .tidy-hint.left,
+.tidy-card[data-swipe="right-soft"] .tidy-hint.right,
+.tidy-card[data-swipe="right"] .tidy-hint.right {
+  opacity: 0.6;
+}
+.tidy-card[data-swipe="left"] .tidy-hint.left,
+.tidy-card[data-swipe="right"] .tidy-hint.right {
+  opacity: 1;
+}
+.tidy-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.6rem;
+  align-items: center;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 1rem;
+}
+.tidy-title {
+  font-size: 1.15rem;
+  line-height: 1.5;
+  margin: 0.6rem 0 0.4rem;
+}
+.tidy-card .dim {
+  color: var(--text-dim);
+}
+.tidy-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 1rem 0 0.5rem;
+}
+@media (max-width: 640px) {
+  .tidy-card {
+    padding: 0.85rem 0.85rem 0.5rem;
+  }
+  .tidy-title {
+    font-size: 1.05rem;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* ドラッグ中(data-swipe がある間)は指に追従させ、離したときだけ戻す */
+  .tidy-card:not([data-swipe]) {
+    transition: transform 0.18s ease-out;
+  }
+}

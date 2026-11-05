@@ -2,7 +2,7 @@
 //
 //   j / k   次・前の記事へ移動(フォーカス)   o / Enter  記事の詳細を開く
 //   x       既読 ⇄ 未読                        u          「既読を隠す」の切り替え
-//   /       検索へ(Ctrl / ⌘ + K も)           g h / g r / g b / g s  放送 / ラジオ / ボード / 設定へ
+//   /       検索へ(Ctrl / ⌘ + K も)           g h / g r / g b / g t / g s  放送 / ラジオ / ボード / 整理 / 設定へ
 //   Space   ラジオの再生中: 一時停止 ⇄ 再開    , / .      ラジオの再生中: 前・次の章
 //   ?       この一覧を表示 / 閉じる            Esc        閉じる
 //
@@ -67,7 +67,7 @@ export function initKeys() {
 
     if (pendingG && now - pendingG < 900) {
       pendingG = 0;
-      const dest = { h: "/", r: "/radio", b: "/board", s: "/settings", w: "/weekly", p: "/reports" }[k];
+      const dest = { h: "/", r: "/radio", b: "/board", t: "/tidy", s: "/settings", w: "/weekly", p: "/reports" }[k];
       if (dest) {
         ev.preventDefault();
         navigate(dest);

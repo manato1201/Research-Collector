@@ -1,7 +1,7 @@
 // Research Broadcast — カテゴリ・API・共通の状態
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
-import { h } from "./util.js";
+import { addDays, h, jstToday } from "./util.js";
 
 export const CATEGORIES = ["game_dev_tech", "graphics_research", "software_engineering"];
 export const LABELS = {
@@ -31,6 +31,13 @@ export const LANG_LABELS = [
 ];
 export const BOARD_ORDER = ["reading", "try", "hold"]; // ボードのページの列(「既読」は列にしない)
 export const DRAWER_STATES = ["unread", ...BOARD_ORDER, "read"];
+// 見直す日の選択肢([キー, 表示, 何日後])
+export const REMIND_CHOICES = [
+  ["tomorrow", "明日", 1],
+  ["3d", "3日後", 3],
+  ["week", "1週間後", 7],
+];
+export const TIDY_DAYS = [7, 14, 30]; // 整理で選べる「何日以上たった未読か」(サーバーの TIDY_BUCKETS と同じ)
 export const STALE_HOURS = 20; // 12時間おきの実行。これを超えて取り込みが無ければ「止まっている可能性」と出す
 
 export function catLabel(c) {
@@ -71,6 +78,9 @@ export async function api(path, { method = "GET", body } = {}) {
 export const state = {
   board: new Map(), // url_hash -> {state, note}
   boardLoaded: false,
+  marks: new Map(), // url_hash -> {pinned, remind_on}(ピンと見直す日。ボードの状態とは別)
+  markList: [], // /api/marks の items(記事つき。ホーム・ボードの「見直し」で使う)
+  marksLoaded: false,
   categoriesLoaded: false,
   prefs: { watchwords: [], muted_sources: [], projects: [] },
   prefsLoaded: false,
@@ -82,11 +92,47 @@ export const state = {
 export const cleanup = []; // ページを離れるときに片付ける処理(IntersectionObserver・読み上げ)
 
 export async function loadBoard(force = false) {
-  if (state.boardLoaded && !force) return;
-  const data = await api("/api/board");
+  const fetching = state.boardLoaded && !force ? null : api("/api/board");
+  const [data] = await Promise.all([fetching, loadMarks(force)]);
+  if (!data) return;
   state.board = new Map(data.items.map((i) => [i.url_hash, { state: i.state, note: i.note }]));
   state.boardLoaded = true;
 }
+
+/** ピンと見直す日。読めなくても(移行前・一時的な障害)、ほかの画面は動かす。認証切れだけは伝える。 */
+export async function loadMarks(force = false) {
+  if (state.marksLoaded && !force) return;
+  try {
+    setMarkList((await api("/api/marks")).items ?? []);
+  } catch (err) {
+    if (err instanceof AuthError) throw err;
+    setMarkList([]);
+  }
+  state.marksLoaded = true;
+}
+
+export function setMarkList(items) {
+  state.markList = items;
+  state.marks = new Map(items.map((i) => [i.url_hash, { pinned: i.pinned, remind_on: i.remind_on }]));
+}
+
+/** 1件の目印を、画面の状態に反映する(どちらも無ければ消す)。記事を渡すと、一覧(markList)にも入れる。 */
+export function applyMark(hash, mark, article = null) {
+  const has = Boolean(mark?.pinned || mark?.remind_on);
+  state.markList = state.markList.filter((i) => i.url_hash !== hash);
+  if (!has) {
+    state.marks.delete(hash);
+    return;
+  }
+  state.marks.set(hash, { pinned: Boolean(mark.pinned), remind_on: mark.remind_on ?? null });
+  if (article) state.markList.unshift({ url_hash: hash, pinned: Boolean(mark.pinned), remind_on: mark.remind_on ?? null, article });
+}
+
+/** 見直す日が、今日かそれより前(=見直しの時期)か。 */
+export const isDue = (mark) => Boolean(mark?.remind_on) && mark.remind_on <= jstToday();
+
+/** n 日後の日付(JST)。 */
+export const remindDate = (n) => addDays(jstToday(), n);
 
 export async function loadCategories() {
   if (state.categoriesLoaded) return;
@@ -179,6 +225,9 @@ export function resetSessionState() {
   state.session = { ...state.session, authenticated: false, via: null };
   state.board = new Map();
   state.boardLoaded = false;
+  state.marks = new Map();
+  state.markList = [];
+  state.marksLoaded = false;
   state.categoriesLoaded = false;
   state.prefs = { watchwords: [], muted_sources: [], projects: [] };
   state.prefsLoaded = false;

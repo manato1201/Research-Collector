@@ -132,6 +132,8 @@ Content-Type: application/json
 | `GET /api/articles` | Bearer か Cookie | `category` / `status` / `since=YYYY-MM-DD` / `until=YYYY-MM-DD`(公開日)/ `collected_since=YYYY-MM-DD` / `collected_until=YYYY-MM-DD`(収集した日。公開日が古い論文も拾える)/ `review=1` / `kind`(出典の種別: `official` `article` `talk` `paper` `x` `other`)/ `lang`(`ja` `en`。題名に日本語を含むか)/ `limit`(1〜200) / `offset`。複数カテゴリの記事は、どのカテゴリで絞っても出る |
 | `GET /api/episodes` | 同上 | `kind=daily\|weekly` / `date=latest\|YYYY-MM-DD\|YYYY-Www` / `category=all\|<カテゴリ>` |
 | `GET /api/episodes/dates` | 同上 | episode のある日付(最大60) |
+| `GET /api/marks` / `PUT・DELETE /api/marks/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | ピンと「見直す日」(ボードの状態とは別の目印。`marks` テーブル)。`{"pinned":true\|false,"remind_on":"YYYY-MM-DD"\|null}` のうち、**書いた項目だけ**変わる。どちらも無くなると行ごと消える。一覧は、ピン → 見直す日の早い順(最大500。記事つき) |
+| `GET /api/tidy` | 同上 | 整理。`days`(1〜90。既定7)以上たった未読(ボード・ピン・見直す日の無い `added` の記事)の、`unread`・`stale`・`buckets`(7 / 14 / 30 日以上の件数)と、古い順の `articles`(`limit` は0〜200。0なら件数だけ)。`exclude_platforms` に対応 |
 | `GET /api/board` / `PUT・DELETE /api/board/{url_hash}` | 同上(書き込みは Cookie のとき Origin も検査) | `{"state":"reading\|try\|hold\|unread","note":"…200字まで"}`。`unread` は行を消す |
 | `GET /api/reports` / `GET /api/reports/{id}` | 同上 | レポートの一覧(`id`・`date`・`title`・`week`・章の数)と、本文(章ごとの Markdown) |
 | `GET /api/watch` | 同上 | 配布サイトの新着(新しい順に50件) |
@@ -141,9 +143,9 @@ Content-Type: application/json
 | `GET /api/watchwords` | 同上 | ウォッチワードごとの、直近7日(収集した日)の件数と新着3件 |
 | `GET /api/prefs` / `PUT /api/prefs/{key}` | 同上(書き込みは Cookie のとき Origin も検査) | 設定。`watchwords`(10個まで)/ `projects`(関連プロジェクト。12個まで)/ `muted_sources`(非表示の収集元) |
 | `GET /api/sources` | 同上 | 収集元ごとの件数(非表示の設定に使う) |
-| `POST /api/board/bulk` | 同上 | `{"hashes":[…200件まで],"state":"read"}`。まとめて既読。**「読む / 試す / 保留」の記事は上書きしない** |
+| `POST /api/board/bulk` | 同上 | `{"hashes":[…200件まで],"state":"read"}`。まとめて既読。**「読む / 試す / 保留」の記事は上書きしない**。`{"state":"unread","only":"read"}` は、**既読になっているものだけ**を未読に戻す(まとめて既読の取り消し) |
 | `POST /api/board/import` | 同上 | `{"items":[{"url_hash","state","note"}…500件まで],"overwrite":false}`。書き出した JSON から戻す。**既定では、すでにボードにある記事を変えない**。`overwrite:true` のときだけ上書き。1件でも不正なら全体を拒否する |
-| `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブル(articles・episodes・reports・board・watch・prefs・meta・insights)を1回200行までページで返す(`scripts/backup_d1.py` が使う) |
+| `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブル(articles・episodes・reports・board・watch・prefs・meta・insights・marks)を1回200行までページで返す(`scripts/backup_d1.py` が使う) |
 | `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
 | `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する 同じ IP から失敗が続くと(15分で8回)、**429**(`retry-after` つき)で、合っているパスワードでも断る。logout も Origin 検査あり |
@@ -206,7 +208,7 @@ python scripts/post_ingest.py --since-hours 100000
 
 **2026-10-11 に実施済み**(Worker `research-broadcast` + D1 `research-broadcast`(APAC)。`wrangler.jsonc` の `database_id` は反映済み)。
 以下は、最初に行った手順と、作り直すときの手順。CLI だけで行える(ダッシュボード操作は不要)。`wrangler login` は一度ブラウザで許可する。
-コードを更新したときは `npx wrangler deploy` だけでよい(migration を足したときは先に `npx wrangler d1 migrations apply DB --remote`。`0003_reports_watch.sql` は、レポートとウォッチのテーブル)。
+コードを更新したときは `npx wrangler deploy` だけでよい(migration を足したときは先に `npx wrangler d1 migrations apply DB --remote`。`0003_reports_watch.sql` は、レポートとウォッチのテーブル。`0007_marks.sql` は、ピンと見直す日のテーブルで、**サイトを更新する前に適用する**)。
 
 **過去の週次レポートの取り込み(バックフィル)**: GitHub の成果物(`weekly-digest-*`。保持90日)を展開した `weekly_digest_YYYY-MM-DD.md` を渡す。
 ```bash

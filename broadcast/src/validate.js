@@ -537,7 +537,7 @@ export function escapeLike(s) {
 
 // ------------------------------------------------------------------ エクスポート(バックアップ)
 
-export const EXPORT_TABLES = ["articles", "episodes", "reports", "board", "watch", "prefs", "meta", "insights"];
+export const EXPORT_TABLES = ["articles", "episodes", "reports", "board", "watch", "prefs", "meta", "insights", "marks"];
 
 // ------------------------------------------------------------------ ボード
 
@@ -577,6 +577,46 @@ export function validateBoardImport(body) {
     items.push({ url_hash: it.url_hash, state: it.state, note });
   }
   return { ok: true, items, overwrite: body.overwrite === true };
+}
+
+// ------------------------------------------------------------------ ピン・見直す日・整理(外部資料 第5弾 Z35)
+
+/** YYYY-MM-DD で、実在する日付か(2026-02-30 のような日は不可)。 */
+export function isRealDate(v) {
+  if (typeof v !== "string" || !DATE_RE.test(v)) return false;
+  const d = new Date(`${v}T00:00:00Z`);
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+}
+
+/**
+ * PUT /api/marks/{url_hash} の本文。{ pinned?: boolean, remind_on?: "YYYY-MM-DD" | null }。
+ * 書いた項目だけ変える(書かなかった項目は、いまの値のまま)。両方とも無ければ拒否する。
+ */
+export function validateMarkInput(body) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) return { ok: false, error: "body_must_be_an_object" };
+  const out = {};
+  if (Object.hasOwn(body, "pinned")) {
+    if (typeof body.pinned !== "boolean") return { ok: false, error: "bad_pinned" };
+    out.pinned = body.pinned;
+  }
+  if (Object.hasOwn(body, "remind_on")) {
+    if (body.remind_on !== null && !isRealDate(body.remind_on)) return { ok: false, error: "bad_remind_on" };
+    out.remind_on = body.remind_on;
+  }
+  if (!Object.hasOwn(out, "pinned") && !Object.hasOwn(out, "remind_on")) return { ok: false, error: "nothing_to_change" };
+  return { ok: true, ...out };
+}
+
+/** GET /api/tidy のクエリ。days = 何日以上たった未読を整理の対象にするか(既定 7)。limit = 返す記事の数(0 なら件数だけ)。 */
+export const TIDY_BUCKETS = [7, 14, 30];
+export function parseTidy(searchParams) {
+  const days = Number(searchParams.get("days") ?? 7);
+  if (!Number.isInteger(days) || days < 1 || days > 90) return { ok: false, error: "bad_days" };
+  const limit = Number(searchParams.get("limit") ?? 30);
+  if (!Number.isInteger(limit) || limit < 0 || limit > 200) return { ok: false, error: "bad_limit" };
+  const exclude = (searchParams.get("exclude_platforms") ?? "").split(",").map((x) => x.trim()).filter(Boolean).slice(0, 40);
+  if (exclude.some((n) => n.length > 40)) return { ok: false, error: "bad_exclude_platforms" };
+  return { ok: true, days, limit, exclude };
 }
 
 export function isUrlHash(v) {

@@ -442,6 +442,81 @@ check("import requires auth", call("POST", "/api/board/import", {"items": [{"url
 call("DELETE", f"/api/board/{IM1}"); call("DELETE", f"/api/board/{IM2}")
 check("import test rows cleaned up", im_state(IM1) is None and im_state(IM2) is None)
 
+# --- ピン・見直す日(marks)と、整理(tidy)。外部資料 第5弾 Z35
+MK1, MK2 = "c3c3c3c3c3c3c3c3", "d4d4d4d4d4d4d4d4"
+def mk(h):
+    return next((i for i in call("GET", "/api/marks")[1]["items"] if i["url_hash"] == h), None)
+s, r = call("PUT", f"/api/marks/{MK1}", {"pinned": True})
+check("marks: pin an article", s == 200 and r["pinned"] is True and r["remind_on"] is None and mk(MK1)["pinned"] is True, (s, r))
+s, r = call("PUT", f"/api/marks/{MK1}", {"remind_on": "2026-11-09"})
+check("marks: setting a reminder keeps the pin (only written fields change)", s == 200 and r["pinned"] is True and r["remind_on"] == "2026-11-09", (s, r))
+s, r = call("PUT", f"/api/marks/{MK1}", {"pinned": False})
+check("marks: unpinning keeps the reminder", s == 200 and r["pinned"] is False and r["remind_on"] == "2026-11-09" and mk(MK1) is not None, (s, r))
+s, r = call("PUT", f"/api/marks/{MK1}", {"remind_on": None})
+check("marks: no pin and no reminder -> the row disappears", s == 200 and mk(MK1) is None, (s, r))
+call("PUT", f"/api/marks/{MK2}", {"pinned": True, "remind_on": "2026-11-07"})
+items = call("GET", "/api/marks")[1]["items"]
+check("marks: list has article=null for an unknown article, and pins sort first",
+      items and items[0]["url_hash"] == MK2 and items[0]["article"] is None, items[:1])
+s, r = call("DELETE", f"/api/marks/{MK2}")
+check("marks: DELETE clears both", s == 200 and r["pinned"] is False and mk(MK2) is None, (s, r))
+check("marks: rejects bad payloads",
+      call("PUT", f"/api/marks/{MK1}", {})[0] == 400
+      and call("PUT", f"/api/marks/{MK1}", {"pinned": "yes"})[0] == 400
+      and call("PUT", f"/api/marks/{MK1}", {"remind_on": "2026-02-30"})[0] == 400
+      and call("PUT", f"/api/marks/{MK1}", {"remind_on": "tomorrow"})[0] == 400
+      and call("PUT", "/api/marks/nothash", {"pinned": True})[0] == 400
+      and call("POST", f"/api/marks/{MK1}", {"pinned": True})[0] == 405
+      and call("POST", "/api/marks", {})[0] == 405)
+check("marks: requires auth", call("GET", "/api/marks", token=None)[0] == 401 and call("PUT", f"/api/marks/{MK1}", {"pinned": True}, token=None)[0] == 401)
+
+s, t0 = call("GET", "/api/tidy?days=1&limit=5")
+check("tidy: shape (counts, buckets, oldest-first articles)",
+      s == 200 and all(k in t0 for k in ("days", "unread", "stale", "buckets", "articles")) and set(t0["buckets"]) == {"7", "14", "30"}
+      and t0["stale"] <= t0["unread"] and t0["buckets"]["7"] >= t0["buckets"]["14"] >= t0["buckets"]["30"], (s, str(t0)[:200]))
+dates = [a["collected_at"] for a in t0["articles"]]
+check("tidy: articles are oldest first and no more than limit", dates == sorted(dates) and len(dates) <= 5, dates)
+check("tidy: limit=0 returns counts only", call("GET", "/api/tidy?days=1&limit=0")[1]["articles"] == [] and call("GET", "/api/tidy?days=1&limit=0")[1]["stale"] == t0["stale"])
+check("tidy: bad params -> 400",
+      call("GET", "/api/tidy?days=0")[0] == 400 and call("GET", "/api/tidy?days=91")[0] == 400 and call("GET", "/api/tidy?limit=201")[0] == 400
+      and call("GET", "/api/tidy?days=x")[0] == 400 and call("GET", "/api/tidy?exclude_platforms=" + "x" * 41)[0] == 400)
+check("tidy: requires auth, GET only", call("GET", "/api/tidy", token=None)[0] == 401 and call("POST", "/api/tidy", {})[0] == 405)
+if t0["stale"] >= 3 and len(t0["articles"]) >= 3:
+    a1, a2, a3 = (a["url_hash"] for a in t0["articles"][:3])
+    check("tidy: only unread, added articles are listed", all(a["status"] == "added" for a in t0["articles"]))
+    call("PUT", f"/api/board/{a1}", {"state": "read"})
+    call("PUT", f"/api/marks/{a2}", {"pinned": True})
+    s, t1 = call("GET", "/api/tidy?days=1&limit=200")
+    hs = [a["url_hash"] for a in t1["articles"]]
+    check("tidy: a board item and a pinned item leave the list (counts follow)", a1 not in hs and a2 not in hs and a3 in hs and t1["stale"] == t0["stale"] - 2 and t1["unread"] == t0["unread"] - 2,
+          (t0["stale"], t1["stale"], t0["unread"], t1["unread"]))
+    # 見直す日を付けても外れる。外したら戻る
+    call("PUT", f"/api/marks/{a3}", {"remind_on": "2026-12-31"})
+    check("tidy: an article with a reminder leaves the list", a3 not in [a["url_hash"] for a in call("GET", "/api/tidy?days=1&limit=200")[1]["articles"]])
+    call("PUT", f"/api/marks/{a3}", {"remind_on": None})
+    call("DELETE", f"/api/marks/{a2}")
+    call("DELETE", f"/api/board/{a1}")
+    s, t2 = call("GET", "/api/tidy?days=1&limit=200")
+    check("tidy: clearing the marks brings them back (nothing is lost)", t2["stale"] == t0["stale"] and t2["unread"] == t0["unread"], (t0["stale"], t2["stale"]))
+    plat = t0["articles"][0]["platform"]
+    s, t3 = call("GET", "/api/tidy?days=1&limit=0&exclude_platforms=" + urllib.parse.quote(plat))
+    check("tidy: exclude_platforms removes that source from the counts", s == 200 and t3["unread"] < t0["unread"], (plat, t0["unread"], t3["unread"]))
+else:
+    print("SKIP tidy interplay checks (not enough stale articles in the local DB)")
+
+# まとめて既読の取り消し(only: read): 既読のものだけ戻し、あとで「試す」にした記事は触らない
+U1, U2 = "e5e5e5e5e5e5e5e5", "f6f6f6f6f6f6f6f6"
+call("POST", "/api/board/bulk", {"hashes": [U1, U2], "state": "read"})
+call("PUT", f"/api/board/{U2}", {"state": "try"})
+s, r = call("POST", "/api/board/bulk", {"hashes": [U1, U2], "state": "unread", "only": "read"})
+now_items = {i["url_hash"]: i["state"] for i in call("GET", "/api/board")[1]["items"]}
+check("bulk undo (only=read) removes read items but keeps 'try'", s == 200 and U1 not in now_items and now_items.get(U2) == "try", (s, now_items.get(U1), now_items.get(U2)))
+check("bulk 'only' is accepted only for unread+read",
+      call("POST", "/api/board/bulk", {"hashes": [U1], "state": "read", "only": "read"})[0] == 400
+      and call("POST", "/api/board/bulk", {"hashes": [U1], "state": "unread", "only": "try"})[0] == 400)
+call("DELETE", f"/api/board/{U2}")
+
+
 
 s, r = call("GET", "/api/export?table=articles&offset=0&limit=5")
 check("export returns a page with a next offset", s == 200 and r["count"] == 5 and r["next"] == 5 and "url_hash" in r["rows"][0], (s, str(r)[:150]))
@@ -526,6 +601,12 @@ if VIEW_PASSWORD:
     s, r, _ = call_raw("PUT", "/api/prefs/watchwords", {"value": ["x1y2z3"]}, headers={**jar, "origin": "https://evil.example"})
     check("cookie + foreign origin cannot save prefs (CSRF)", s == 403, (s, r))
     call("PUT", "/api/prefs/watchwords", {"value": []})
+    s, r, _ = call_raw("PUT", f"/api/marks/{HASH}", {"pinned": True}, headers={**jar, **origin})
+    check("cookie + same origin can write marks; foreign origin / no Origin cannot (CSRF)",
+          s == 200 and call_raw("PUT", f"/api/marks/{HASH}", {"pinned": False}, headers={**jar, "origin": "https://evil.example"})[0] == 403
+          and call_raw("PUT", f"/api/marks/{HASH}", {"pinned": False}, headers=jar)[0] == 403, (s, r))
+    call("DELETE", f"/api/marks/{HASH}")
+    check("cookie can read marks and tidy", call_raw("GET", "/api/marks", headers=jar)[0] == 200 and call_raw("GET", "/api/tidy?limit=1", headers=jar)[0] == 200)
     s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, **origin})
     check("cookie + same origin can write board", s == 200, (s, r))
     s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, "origin": "https://evil.example"})

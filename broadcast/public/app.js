@@ -18,6 +18,7 @@ import * as player from "./player.js";
 import { pageHome } from "./page-home.js";
 import { pageCategory } from "./page-category.js";
 import { pageBoard } from "./page-board.js";
+import { pageTidy } from "./page-tidy.js";
 import { pageRadio } from "./page-radio.js";
 import { pageSearch } from "./page-search.js";
 import { pageSettings } from "./page-settings.js";
@@ -36,6 +37,7 @@ registerRoutes([
   { re: /^\/settings$/, nav: "settings", title: "設定", run: (v) => pageSettings(v) },
   { re: /^\/radio$/, nav: "radio", title: "ラジオ", run: (v, _m, q) => pageRadio(v, q) },
   { re: /^\/board$/, nav: "board", title: "ボード", run: (v, _m, q) => pageBoard(v, q) },
+  { re: /^\/tidy$/, nav: "tidy", title: "整理", run: (v, _m, q) => pageTidy(v, q) },
   { re: /^\/weekly(?:\/(\d{4}-W\d{2}))?$/, nav: "weekly", title: "週次特集", run: (v, m) => pageWeekly(v, m[1] ?? null) },
   { re: /^\/reports$/, nav: "reports", title: "レポート", run: (v) => pageReports(v) },
   { re: /^\/reports\/(digest:\d{4}-\d{2}-\d{2})$/, nav: "reports", title: "レポート", run: (v, m) => pageReport(v, m[1]) },

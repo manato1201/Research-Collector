@@ -2,7 +2,9 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 import { formatDateTime, h, jstToday, shortDate, toast } from "./util.js";
-import { AuthError, BOARD_LABELS, DRAWER_STATES, api, catLabel, cleanup, dot, loadInsights, projectsFor, state } from "./store.js";
+import {
+  AuthError, BOARD_LABELS, DRAWER_STATES, REMIND_CHOICES, api, applyMark, catLabel, cleanup, dot, isDue, loadInsights, projectsFor, remindDate, state,
+} from "./store.js";
 import { navigate } from "./router.js";
 import * as player from "./player.js";
 
@@ -33,6 +35,7 @@ export function renderItem(a, { showCategoryBadge = true } = {}) {
   if (board && board.state !== "read") {
     meta.append(h("span", { class: "badge state", title: "ボードに入れた状態" }, BOARD_LABELS[board.state] ?? board.state));
   }
+  meta.append(...markBadges(a.url_hash));
   for (const name of projectsFor(a)) {
     meta.append(h("span", { class: "badge project", title: "設定した関連プロジェクトのキーワードに当てはまります" }, `# ${name}`));
   }
@@ -69,6 +72,38 @@ export function renderItem(a, { showCategoryBadge = true } = {}) {
   return li;
 }
 
+
+/** ピン・見直す日のバッジ(一覧の行に付ける。ボードの状態のバッジとは別)。 */
+export function markBadges(hash) {
+  const m = state.marks.get(hash);
+  if (!m) return [];
+  const out = [];
+  if (m.pinned) out.push(h("span", { class: "badge pin mark", title: "ピン留め: 整理の候補から外れています" }, "ピン"));
+  if (m.remind_on) {
+    const due = isDue(m);
+    out.push(
+      h(
+        "span",
+        { class: `badge mark${due ? " warn" : ""}`, title: due ? "見直す日になりました" : "見直す日を決めています(通知は出ません)" },
+        due ? "見直し" : `見直し ${m.remind_on.slice(5).replace("-", "/")}`,
+      ),
+    );
+  }
+  return out;
+}
+
+/** ピン・見直しの一覧(記事つき)。記事が保持期間を過ぎて消えていれば、その旨だけ出す。 */
+export function renderMarkItems(entries) {
+  const ul = h("ul", { class: "list" });
+  for (const e of entries) {
+    ul.append(
+      e.article
+        ? renderItem({ ...e.article, url_hash: e.url_hash, other_categories: [] }, { showCategoryBadge: false })
+        : h("li", { class: "item" }, h("p", { class: "item-sum" }, "(記事は保持期間を過ぎて削除されました)")),
+    );
+  }
+  return ul;
+}
 
 export function sourceChips(sources, active, onPick) {
   const wrap = h("div", { class: "source-chips", role: "group", "aria-label": "収集元で絞り込む" });
@@ -198,8 +233,63 @@ export function buildDrawerBody(a) {
       .catch(() => {});
   }
   const readOne = readButton("この記事を読み上げ", a.title, () => [{ label: "記事", text: `${a.title}。${a.summary ?? ""}` }]);
-  wrap.append(h("div", { class: "drawer-actions" }, open, readOne), stateBox, noteInput);
+  // ピン留め・見直す日(ボードの状態とは別。整理の候補から外す / あとで見直す)
+  const markBox = h("div", { class: "board-state mark-box", role: "group", "aria-label": "ピンと見直す日" });
+  const refreshMarks = () => {
+    const m = state.marks.get(a.url_hash);
+    markBox.replaceChildren(
+      h(
+        "button",
+        {
+          class: "chip",
+          type: "button",
+          "aria-pressed": String(Boolean(m?.pinned)),
+          title: "整理の候補から外して、残しておきます",
+          onclick: () => setMark(a, { pinned: !m?.pinned }, refreshMarks),
+        },
+        "ピン留め",
+      ),
+      h("span", { class: "mark-label" }, "見直す日:"),
+      ...REMIND_CHOICES.map(([key, label, n]) => {
+        const day = remindDate(n);
+        return h(
+          "button",
+          {
+            class: "chip",
+            type: "button",
+            "data-remind": key,
+            "aria-pressed": String(m?.remind_on === day),
+            onclick: () => setMark(a, { remind_on: m?.remind_on === day ? null : day }, refreshMarks),
+          },
+          label,
+        );
+      }),
+      m?.remind_on ? h("span", { class: "mark-note mono" }, m.remind_on) : null,
+      m?.remind_on ? h("button", { class: "chip", type: "button", onclick: () => setMark(a, { remind_on: null }, refreshMarks) }, "解除") : null,
+    );
+  };
+  refreshMarks();
+
+  wrap.append(h("div", { class: "drawer-actions" }, open, readOne), stateBox, noteInput, markBox);
   return wrap;
+}
+
+/** ピン留め・見直す日を変える(書いた項目だけ変わる)。 */
+export async function setMark(article, patch, rerender) {
+  try {
+    const res = await api(`/api/marks/${article.url_hash}`, { method: "PUT", body: patch });
+    applyMark(article.url_hash, res, article);
+    rerender?.();
+    refreshItemBadges(article.url_hash);
+    toast(
+      "pinned" in patch
+        ? patch.pinned ? "ピン留めしました" : "ピンを外しました"
+        : patch.remind_on ? `${patch.remind_on} に見直します` : "見直す日を外しました",
+    );
+  } catch (err) {
+    if (err instanceof AuthError) return navigate("/login");
+    toast("更新できませんでした。時間をおいてやり直してください", true);
+  }
 }
 
 export async function setBoard(article, newState, note, rerender) {
@@ -227,10 +317,12 @@ export function refreshItemBadges(hash) {
   const board = state.board.get(hash);
   for (const li of document.querySelectorAll(`#view .item[data-hash="${hash}"]`)) {
     li.querySelector(".badge.state")?.remove();
+    li.querySelectorAll(".badge.mark").forEach((b) => b.remove());
     li.classList.toggle("is-read", board?.state === "read");
     if (board && board.state !== "read") {
       li.querySelector(".item-meta")?.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
     }
+    li.querySelector(".item-meta")?.append(...markBadges(hash));
   }
 }
 

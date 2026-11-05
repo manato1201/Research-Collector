@@ -332,7 +332,7 @@ with sync_playwright() as p:
     check("radio: the script can be read as text", page.locator("details.acc summary", has_text="原稿").count() == 1)
 
     # --- 画面に「null」「undefined」が文字として出ていない(条件つきの部品が null のとき)
-    paths = ["/", "/radio", "/board", "/weekly", "/reports", "/status", "/settings", "/search", "/c/game_dev_tech", "/c/software_engineering"]
+    paths = ["/", "/radio", "/board", "/tidy", "/weekly", "/reports", "/status", "/settings", "/search", "/c/game_dev_tech", "/c/software_engineering"]
     if n_extra:
         extra_ids = page.evaluate("fetch('/api/categories').then(r => r.json()).then(j => j.extra.map(e => e.id))")
         paths += [f"/c/{i}" for i in extra_ids]
@@ -590,6 +590,180 @@ with sync_playwright() as p:
     check("keys: Esc closes the help", page.locator("#help").is_hidden())
     page.keyboard.press("Space")
     check("keys: Space with no player does not break the page", page.locator(".lanes").count() >= 1)
+
+    # --- 整理(外部資料 第5弾 Z35): 1件ずつ片づける・ピン・見直す日・取り消し・スワイプ
+    from datetime import datetime, timedelta, timezone
+    jst_today = datetime.now(timezone(timedelta(hours=9))).date()
+    def api_json(path):
+        return page.evaluate(f"fetch('{path}').then(r => r.json())")
+    def api_send(method, path, body=None):
+        b = "undefined" if body is None else "JSON.stringify(" + json.dumps(body) + ")"
+        return page.evaluate(f"fetch('{path}', {{method: '{method}', headers: {{'content-type': 'application/json'}}, body: {b}}}).then(r => r.status)")
+    def wait_title_change(old):
+        for _ in range(40):
+            if page.locator(".tidy-title").count() and page.inner_text(".tidy-title") != old:
+                return True
+            page.wait_for_timeout(100)
+        return False
+    touched = []  # 後片付けする記事
+
+    # 整理のテスト用に、40日前に収集した未読の記事を8件、ローカルのDBへ入れる(終わったら消す)。ローカルの記事の古さに左右されないため
+    import subprocess, urllib.request
+    def _ingest_token():
+        t = os.environ.get("BROADCAST_INGEST_TOKEN")
+        if t:
+            return t
+        m = re.search(r"^INGEST_TOKEN=(.+)$", open(os.path.join(os.path.dirname(HERE), ".dev.vars"), encoding="utf-8").read(), re.M)
+        return m.group(1).strip() if m else None
+    fx_base = datetime.now(timezone.utc) - timedelta(days=40)
+    fixtures = [{
+        "url_hash": f"7a7a7a7a7a7a7a{i:02x}", "url": f"https://example.com/tidy-fixture-{i}", "title": f"整理テスト用の記事 {i}",
+        "source_type": "zenn", "platform": "tidy-fixture", "categories": ["game_dev_tech"], "label": "game_dev_tech", "keywords": [],
+        "review": False, "status": "added", "published": fx_base.strftime("%Y-%m-%d"),
+        "collected_at": (fx_base + timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M:%SZ"), "summary": f"整理のテスト用の要約 {i}", "summary_src": "feed",
+    } for i in range(8)]
+    seeded = False
+    try:
+        req = urllib.request.Request(BASE + "/api/ingest", data=json.dumps({"schema": 1, "articles": fixtures}).encode("utf-8"),
+                                     headers={"content-type": "application/json", "authorization": f"Bearer {_ingest_token()}"}, method="POST")
+        seeded = urllib.request.urlopen(req, timeout=30).status == 200
+    except Exception as e:
+        print("could not seed tidy fixtures:", e)
+
+    probe = api_json("/api/tidy?days=7&limit=0")
+    best_d = max(("7", "14", "30"), key=lambda d: probe["buckets"][d])
+    n_stale = probe["buckets"][best_d]
+    if n_stale < 6:
+        print("SKIP tidy browser checks (fewer than 6 stale unread articles in the local DB)")
+    else:
+        page.click("nav a[data-nav=tidy]")
+        page.wait_for_selector(".tidy-stats")
+        check("tidy: nav link marks the page current", page.get_attribute("a[data-nav=tidy]", "aria-current") == "page")
+        page.goto(BASE + f"/tidy?d={best_d}")
+        page.wait_for_selector(".tidy-card")
+        check("tidy: three day-chips with counts, the chosen one pressed",
+              page.locator(".row-controls .chip").count() == 3 and page.locator(f".chip[data-days='{best_d}']").get_attribute("aria-pressed") == "true")
+        listed = api_json(f"/api/tidy?days={best_d}&limit=200")["articles"]
+        check("tidy: the first card is the oldest unread article", page.inner_text(".tidy-title").strip() == listed[0]["title"].strip(), (page.inner_text(".tidy-title"), listed[0]["title"]))
+        check("tidy: card shows its age and a link to the original (http/https, noopener)",
+              "日前に収集" in page.inner_text(".tidy-meta") and page.locator(".tidy-card a.btn").get_attribute("target") == "_blank"
+              and "noopener" in (page.locator(".tidy-card a.btn").get_attribute("rel") or ""))
+        check("tidy: no horizontal overflow (desktop)", overflow(page) <= 0, overflow(page))
+        OUT and page.screenshot(path=os.path.join(OUT, "tidy_desktop.png"), full_page=True)
+
+        h1, h2, h3, h4, h5 = (a["url_hash"] for a in listed[:5])
+        touched += [h1, h2, h3, h4, h5]
+        # ← 完了(既読)
+        t1 = page.inner_text(".tidy-title")
+        page.keyboard.press("ArrowLeft")
+        check("tidy: ← marks it read and shows the next card", wait_title_change(t1) and next((i for i in api_json("/api/board")["items"] if i["url_hash"] == h1), {}).get("state") == "read")
+        check("tidy: the tally says 完了 1", "完了 1" in page.inner_text(".tidy-stats").replace("\n", " "), page.inner_text(".tidy-stats"))
+        # z ひとつ戻す
+        page.keyboard.press("z")
+        check("tidy: z undoes it (same card back, board row removed)", wait_title_change(listed[1]["title"]) and page.inner_text(".tidy-title").strip() == listed[0]["title"].strip()
+              and not any(i["url_hash"] == h1 for i in api_json("/api/board")["items"]))
+        # → ピン留め
+        t1 = page.inner_text(".tidy-title")
+        page.keyboard.press("ArrowRight")
+        wait_title_change(t1)
+        marks = {m["url_hash"]: m for m in api_json("/api/marks")["items"]}
+        check("tidy: → pins it (and it stays unread)", marks.get(h1, {}).get("pinned") is True and not any(i["url_hash"] == h1 for i in api_json("/api/board")["items"]), marks.get(h1))
+        # 1 = 明日に見直す
+        t1 = page.inner_text(".tidy-title")
+        page.keyboard.press("1")
+        wait_title_change(t1)
+        marks = {m["url_hash"]: m for m in api_json("/api/marks")["items"]}
+        check("tidy: 1 sets the reminder to tomorrow (JST)", marks.get(h2, {}).get("remind_on") == (jst_today + timedelta(days=1)).isoformat(), marks.get(h2))
+        # ↓ 今は決めない: 何も付かない
+        t1 = page.inner_text(".tidy-title")
+        page.keyboard.press("ArrowDown")
+        wait_title_change(t1)
+        marks = {m["url_hash"] for m in api_json("/api/marks")["items"]}
+        board = {i["url_hash"] for i in api_json("/api/board")["items"]}
+        check("tidy: ↓ leaves the article untouched (still unread, no mark)", h3 not in marks and h3 not in board and "今は決めない 1" in page.inner_text(".tidy-stats"))
+        # スワイプ(左 = 完了)
+        t1 = page.inner_text(".tidy-title")
+        box = page.locator(".tidy-title").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx - 60, cy, steps=4)
+        mid = page.locator(".tidy-card").get_attribute("data-swipe")
+        page.mouse.move(cx - 160, cy, steps=6)
+        page.mouse.up()
+        wait_title_change(t1)
+        check("tidy: dragging the card left marks it read (swipe hint shown while dragging)",
+              mid in ("left-soft", "left") and next((i for i in api_json("/api/board")["items"] if i["url_hash"] == h4), {}).get("state") == "read", (mid,))
+        # 短いドラッグでは何も起きない
+        t1 = page.inner_text(".tidy-title")
+        box = page.locator(".tidy-title").bounding_box()
+        cx, cy = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+        page.mouse.move(cx, cy)
+        page.mouse.down()
+        page.mouse.move(cx + 40, cy, steps=3)
+        page.mouse.up()
+        page.wait_for_timeout(300)
+        check("tidy: a short drag does nothing (the card stays)", page.inner_text(".tidy-title") == t1)
+        # ボタンでも同じことができる(スワイプは近道)
+        t1 = page.inner_text(".tidy-title")
+        page.locator(".tidy-actions button[data-act=pin]").click()
+        wait_title_change(t1)
+        marks = {m["url_hash"]: m for m in api_json("/api/marks")["items"]}
+        check("tidy: the same actions are available as buttons", marks.get(h5, {}).get("pinned") is True, marks.get(h5))
+        # まとめて既読 → ひとつ戻す(既読のものだけ戻る)
+        left_before = page.locator(".tidy-stats .num").first.inner_text()
+        page.once("dialog", lambda d: d.accept())
+        page.locator("button[data-act=bulk]").click()
+        for _ in range(30):
+            if page.locator(".tidy-card").count() == 0:
+                break
+            page.wait_for_timeout(100)
+        check("tidy: bulk read empties the queue and says it is done", page.locator(".tidy-card").count() == 0 and "片づきました" in page.inner_text(".tidy-stage"), page.inner_text(".tidy-stage")[:80])
+        read_now = {i["url_hash"] for i in api_json("/api/board")["items"] if i["state"] == "read"}
+        page.locator("button[data-act=undo]").click()
+        page.wait_for_selector(".tidy-card")
+        read_after = {i["url_hash"] for i in api_json("/api/board")["items"] if i["state"] == "read"}
+        check("tidy: undoing the bulk read restores the queue (the swiped one stays read)", h4 in read_after and len(read_now) > len(read_after), (len(read_now), len(read_after)))
+
+        # ボード・ホームに出る
+        page.goto(BASE + "/board")
+        page.wait_for_selector("#board-pin")
+        check("board: counts line, tidy entry, and the pinned section", "ピン" in page.inner_text(".tidy-stats") and page.locator("a.btn[href='/tidy']").count() == 1
+              and page.locator("#board-pin").locator("xpath=ancestor::section").locator(".item").count() >= 2 and page.locator("#board-remind").count() == 1)
+        check("board: pinned item carries the pin badge", page.locator(".badge.pin", has_text="ピン").count() >= 1)
+        api_send("PUT", f"/api/marks/{h2}", {"remind_on": jst_today.isoformat()})
+        page.goto(BASE + "/")
+        page.wait_for_selector("#due-title")
+        check("home: an article whose reminder day has come shows under 今日見直すもの with a 見直し badge",
+              page.locator("#due-title").count() == 1 and page.locator(".badge.mark.warn", has_text="見直し").count() >= 1)
+        # ドロワーの操作
+        page.locator("#due-title").locator("xpath=ancestor::section").locator(".item-title").first.click()
+        page.wait_for_selector("#drawer:not([hidden])")
+        page.locator("#drawer button", has_text="ピン留め").click()
+        page.wait_for_selector(".toast")
+        marks = {m["url_hash"]: m for m in api_json("/api/marks")["items"]}
+        check("drawer: pin button pins (reminder kept); the pressed state follows", marks.get(h2, {}).get("pinned") is True and marks[h2]["remind_on"] == jst_today.isoformat()
+              and page.locator("#drawer button", has_text="ピン留め").get_attribute("aria-pressed") == "true")
+        page.locator("#drawer button", has_text="解除").click()
+        page.wait_for_timeout(300)
+        marks = {m["url_hash"]: m for m in api_json("/api/marks")["items"]}
+        check("drawer: 解除 clears only the reminder", marks.get(h2, {}).get("remind_on") is None and marks.get(h2, {}).get("pinned") is True)
+        page.keyboard.press("Escape")
+        page.goto(BASE + "/")
+        page.wait_for_selector(".lanes")
+        check("home: nothing is due after the reminder is cleared", page.locator("#due-title").count() == 0)
+
+        # 後片付け(ローカルの行を戻す)
+        for hh in touched:
+            api_send("DELETE", f"/api/board/{hh}")
+            api_send("DELETE", f"/api/marks/{hh}")
+        check("tidy: test rows cleaned up", not [m for m in api_json("/api/marks")["items"] if m["url_hash"] in touched])
+
+    if seeded:
+        # テスト用の記事を消す(board / marks に残った行も)。ローカルのD1を直接さわる(本番には触れない)
+        sql = "DELETE FROM board WHERE url_hash LIKE '7a7a7a7a7a7a7a%'; DELETE FROM marks WHERE url_hash LIKE '7a7a7a7a7a7a7a%'; DELETE FROM articles WHERE platform = 'tidy-fixture';"
+        done = subprocess.run(f'npx wrangler d1 execute DB --local --command "{sql}"', shell=True, cwd=os.path.dirname(HERE), capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120)
+        check("tidy: fixture articles removed from the local DB", done.returncode == 0 and "tidy-fixture" not in json.dumps(api_json("/api/tidy?days=1&limit=200")["articles"]), done.stderr[-200:])
 
     # --- 後片付け(ローカルのボードの行を戻す)
     page.evaluate(f"fetch('/api/board/{first_hash}', {{method: 'DELETE'}}).then(r => r.status)")
