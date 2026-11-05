@@ -37,6 +37,7 @@ _PLATFORM_RANK = {
     "arxiv": 1, "semantic_scholar": 2,
     "cedil": 3, "cedec_youtube": 3,
     "zenn": 4, "qiita": 4,
+    "denfaminicogamer": 4, "gamemakers": 4,
 }
 
 _WORD_RE = re.compile(r"[a-z0-9]{2,}")

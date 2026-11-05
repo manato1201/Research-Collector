@@ -98,7 +98,7 @@ Secretへ自動的に書き戻す。これには **Secrets書き込み権限を�
 
 ```
 毎日 6:00 / 18:00 (JST)
-  → RSS・API 収集（Zenn/Qiita/Unity Blog/UE Blog/CEDEC/SideFX/Cloudflare/Hugging Face、
+  → RSS・API 収集（Zenn/Qiita/Unity Blog/UE Blog/CEDEC/SideFX/Cloudflare/Hugging Face/電ファミ/ゲームメーカーズ、
     論文は月・木、X投稿は x_urls.txt のURLのみ）
   → 重複除去（URL + タイトルの類似）→ 分類の補助（どれでもない = 人の確認）
   → NotebookLM の各ノートブックに自動追加

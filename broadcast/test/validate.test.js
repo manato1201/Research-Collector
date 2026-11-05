@@ -345,3 +345,12 @@ test("validateBoardImport: shape, duplicates, limits, overwrite flag", () => {
   assert.equal(validateBoardImport({ items: [item(1, { note: "x".repeat(201) })] }).error, "bad_note");
   assert.equal(validateBoardImport(null).error, "body_must_be_an_object");
 });
+
+test("SOURCE_KINDS: game media is its own kind and is never counted as 'other'", () => {
+  assert.deepEqual(SOURCE_KINDS.news, ["denfami", "gamemakers"]);
+  const q = buildArticleQuery(new URLSearchParams("kind=news"));
+  assert.ok(q.ok && q.where.includes("source_type IN (?,?)"));
+  assert.deepEqual(q.params, ["denfami", "gamemakers"]);
+  const other = buildArticleQuery(new URLSearchParams("kind=other"));
+  assert.ok(other.params.includes("denfami") && other.params.includes("gamemakers"));
+});

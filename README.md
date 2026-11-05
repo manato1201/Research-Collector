@@ -32,6 +32,7 @@
 | SideFX Houdini 変更履歴(バグ修正のみのものは除く) | Game-Dev-Tech + Graphics-Research |
 | arXiv / Semantic Scholar（RAG・LLM・DCC学習関連） | Software-Engineering |
 | Cloudflare 変更履歴 / Hugging Face ブログ（モデルの公開） | Software-Engineering |
+| 電ファミニコゲーマー / ゲームメーカーズ（RSS の題名・要約のみ。ゲームと関係の無い記事は「要確認」） | Game-Dev-Tech |
 | X の投稿（`x_urls.txt` に書いたURLだけ） | Software-Engineering |
 | skills.sh（新着の監視のみ。通知するだけで導入はしない） | — |
 
@@ -327,6 +328,7 @@ research-collector/
 ├── collectors/
 │   ├── _academic_api.py       # arXiv/Semantic Scholar共通ヘルパー
 │   ├── release_notes_collector.py # SideFX / Cloudflare / Hugging Face の更新情報
+│   ├── game_media_collector.py    # 電ファミニコゲーマー / ゲームメーカーズ(ゲーム・ゲーム制作のメディア。RSS)
 │   ├── x_posts_collector.py      # x_urls.txt のURLだけを取り込む
 │   ├── watch_collector.py        # 配布サイトの新着監視(通知のみ)
 │   ├── zenn_qiita_collector.py   # collect() + collect_backfill()

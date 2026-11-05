@@ -160,7 +160,7 @@ with sync_playwright() as p:
     kana_re = re.compile("[ぁ-ゟ゠-ヿ一-鿿]")
     page.goto(BASE + "/c/graphics_research?p=30d")
     page.wait_for_selector(".item")
-    check("filters: kind and language chip rows exist", page.locator("[aria-label=種別] .chip").count() == 7 and page.locator("[aria-label=言語] .chip").count() == 3)
+    check("filters: kind and language chip rows exist", page.locator("[aria-label=種別] .chip").count() == 8 and page.locator("[aria-label=言語] .chip").count() == 3)
     check("filters: no reset button while unfiltered", page.locator("button:has-text('条件をリセット')").count() == 0)
     n_unfiltered = page.locator(".item").count()
     page.click("[aria-label=言語] .chip:has-text('English')")

@@ -106,6 +106,12 @@ def run_daily():
         return collect(skip_hashes=load_seen())
     _collect("X posts", _x_posts, unit="posts")
 
+    # 7c. ゲームメディア(電ファミニコゲーマー・ゲームメーカーズ。RSS の題名・要約のみ。2026-11追加)
+    def _game_media():
+        from collectors.game_media_collector import collect
+        return collect(max_per_feed=5)
+    _collect("GameMedia", _game_media)
+
     # 8. 配布サイトの新着監視（通知のみ。NotebookLMへは追加しない）— S5
     watch_new = []
     try:

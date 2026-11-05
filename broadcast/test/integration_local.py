@@ -411,7 +411,7 @@ check("bulk requires auth", call("POST", "/api/board/bulk", {"hashes": [H1], "st
 
 # --- 出典の種別・言語の絞り込み(件数が全体と合う)
 all_n = call("GET", "/api/articles?status=added&limit=1")[1]["total"]
-kind_total = sum(call("GET", f"/api/articles?status=added&kind={k}&limit=1")[1]["total"] for k in ("official", "article", "talk", "paper", "x", "other"))
+kind_total = sum(call("GET", f"/api/articles?status=added&kind={k}&limit=1")[1]["total"] for k in ("official", "article", "news", "talk", "paper", "x", "other"))
 check("every article belongs to exactly one kind (counts add up)", kind_total == all_n and all_n > 0, (kind_total, all_n))
 ja_n = call("GET", "/api/articles?status=added&lang=ja&limit=1")[1]["total"]
 en_n = call("GET", "/api/articles?status=added&lang=en&limit=1")[1]["total"]

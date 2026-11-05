@@ -57,6 +57,10 @@ SOURCE_TYPE_TO_CATEGORIES = {
     "cloudflare": ["software_engineering"],
     "model":      ["software_engineering"],
     "x_post":     ["software_engineering"],
+
+    # ゲームメディア(2026-11追加): 電ファミニコゲーマー / ゲームメーカーズ → ゲーム開発
+    "denfami":    ["game_dev_tech"],
+    "gamemakers": ["game_dev_tech"],
 }
 
 # 週次ノートブック名のテンプレート

@@ -274,6 +274,7 @@ export function validateIngest(body, categories = CATEGORIES) {
 export const SOURCE_KINDS = {
   official: ["unity", "unreal", "houdini", "cloudflare", "model"],
   article: ["zenn", "qiita"],
+  news: ["denfami", "gamemakers"], // ゲームメディア(電ファミニコゲーマー・ゲームメーカーズ)
   talk: ["cedec", "gdc"],
   paper: ["paper", "arxiv"],
   x: ["x_post"],

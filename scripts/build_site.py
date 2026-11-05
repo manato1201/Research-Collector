@@ -43,6 +43,7 @@ PLATFORM_LABELS = {
     "arxiv": "arXiv", "semantic_scholar": "Semantic Scholar",
     "sidefx_changelog": "SideFX", "cloudflare_changelog": "Cloudflare",
     "huggingface_blog": "Hugging Face", "x": "X",
+    "denfaminicogamer": "電ファミ", "gamemakers": "ゲームメーカーズ",
 }
 
 
@@ -141,12 +142,13 @@ def count_sources() -> int:
     """収集元(フィード・API)の数。コードの定義から数える(手書きしない)。"""
     from collectors import (
         zenn_qiita_collector as zq, unity_ue_collector as uu,
-        release_notes_collector as rn,
+        release_notes_collector as rn, game_media_collector as gm,
     )
     feeds = len(zq.ALL_FEEDS) + len(uu.ALL_FEEDS)
     feeds += 2   # CEDEC: CEDiL + YouTube
     feeds += 2   # 論文: arXiv + Semantic Scholar
     feeds += len(rn.STATIC_FEEDS) + 1   # 更新情報: 静的フィード + SideFX
+    feeds += len(gm.MEDIA_FEEDS)        # ゲームメディア
     return feeds
 
 

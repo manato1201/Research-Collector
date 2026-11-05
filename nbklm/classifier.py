@@ -85,6 +85,8 @@ _SOURCE_PRIOR: dict[str, tuple[str, int]] = {
     "houdini":    ("graphics_research", 2),
     "cloudflare": ("software_engineering", 2),
     "model":      ("software_engineering", 1),
+    # ゲームメーカーズはゲーム制作の媒体。電ファミは映画など別の話題も載るので、事前情報は与えない(外れたら「要確認」)
+    "gamemakers": ("game_dev_tech", 2),
 }
 
 

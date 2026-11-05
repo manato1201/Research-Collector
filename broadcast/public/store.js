@@ -19,6 +19,7 @@ export const BOARD_LABELS = { reading: "読む", try: "試す", hold: "保留", 
 export const KIND_LABELS = [
   ["official", "公式・更新情報"],
   ["article", "技術記事"],
+  ["news", "ゲームニュース"],
   ["talk", "講演資料"],
   ["paper", "論文"],
   ["x", "X 投稿"],
