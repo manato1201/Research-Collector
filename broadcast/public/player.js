@@ -6,8 +6,11 @@
 //  - 一時停止は pause() に頼らない(端末によって効かない)。止めて、再開時に今のかたまりを頭から話し直す。
 //  - ページを移動しても続く(プレーヤーはページの外側にある)。ページを閉じると止まる。
 //  - 速度・声は localStorage に覚える(使えなくても動く)。
+//  - 「○○ の放送」(ラジオの番組)は、止めた章と、聞き終えたことも覚える(radio-memory.js。この端末だけ)。
+//  - ロック画面・イヤホンの操作(Media Session API)に、再生・一時停止・前後の章をつなぐ(対応するブラウザだけ)。
 
 import { splitChunks } from "./radio-script.js";
+import { clearPosition, getPosition, heardSet, markHeard, savePosition } from "./radio-memory.js";
 import { jingle } from "./sfx.js";
 import { isHighQuality, pickBestVoice, rankVoices, voiceLabel } from "./voice.js";
 
@@ -35,7 +38,7 @@ const store = {
   },
 };
 
-let queue = []; // [{label, chunks: [{text, slide}]}]  slide = そのとき画面に出す内容(無ければ null)
+let queue = []; // [{label, chunks: [{text, slide, caption}]}]  slide = そのとき画面に出す内容 / caption = 字幕(表示用の文。無ければ "")
 let pos = { c: 0, k: 0 };
 let token = 0; // 古いコールバックを無視する
 let status = "idle"; // idle | playing | paused
@@ -48,6 +51,18 @@ let sleepAt = 0; // 停止する時刻(ms)。0 = なし
 let jingleTimer = null;
 const listeners = new Set();
 
+// 記憶(radio-memory.js)は、ラジオの番組(題名が「… の放送」)のときだけ使う。記事ひとつの読み上げなどは、覚えない
+const memory = { getItem: (k) => store.get(k), setItem: (k, v) => store.set(k, v) };
+const rememberable = (t) => typeof t === "string" && t.endsWith(" の放送");
+function remember() {
+  if (status === "idle" || !rememberable(title) || !queue[pos.c]) return;
+  savePosition(memory, title, { c: pos.c, label: queue[pos.c].label });
+}
+/** 番組(題名)の、覚えている章。無ければ null。 */
+export const savedPosition = (t, chapterCount) => (rememberable(t) ? getPosition(memory, t, chapterCount) : null);
+/** 聞き終えた回の題名の集合。 */
+export const heardTitles = () => heardSet(memory);
+
 function notify() {
   const snap = snapshot();
   listeners.forEach((fn) => fn(snap));
@@ -59,7 +74,9 @@ export function snapshot() {
     status,
     title,
     chapter: queue[pos.c]?.label ?? "",
+    chapters: queue.map((c) => c.label), // 章の名前の並び(再生バーの章の印に使う)
     chapterIndex: pos.c,
+    caption: queue[pos.c]?.chunks[pos.k]?.caption ?? "", // 字幕: いま読んでいる部分の、表示用の文(「読み」ではなく、正しい表記)
     slide: queue[pos.c]?.chunks[pos.k]?.slide ?? null, // いま読んでいる部分の画面(ラジオの画面が使う)
     chapterCount: total,
     rate,
@@ -79,7 +96,12 @@ function pickVoice() {
   return pickBestVoice(synth.getVoices(), voiceName);
 }
 
-function finish() {
+/** completed = 最後まで聞き終えた(自然に終わった)。そのときだけ「聞き終えた回」に記録し、位置は消す。 */
+function finish(completed = false) {
+  if (completed && rememberable(title)) {
+    markHeard(memory, title);
+    clearPosition(memory, title);
+  }
   token++;
   clearTimeout(jingleTimer);
   status = "idle";
@@ -94,7 +116,8 @@ function advance() {
   pos.k++;
   if (pos.k >= ch.chunks.length) {
     pos = { c: pos.c + 1, k: 0 };
-    if (pos.c >= queue.length) return finish();
+    if (pos.c >= queue.length) return finish(true);
+    remember();
   }
   speakCurrent();
   notify();
@@ -143,12 +166,12 @@ function speakChunk(text) {
  */
 function chunksOf(c) {
   if (Array.isArray(c.parts) && c.parts.length) {
-    return c.parts.flatMap((p) => splitChunks(p.text).map((text) => ({ text, slide: p.slide ?? null })));
+    return c.parts.flatMap((p) => splitChunks(p.text).map((text) => ({ text, slide: p.slide ?? null, caption: p.caption ?? "" })));
   }
-  return splitChunks(c.text).map((text) => ({ text, slide: null }));
+  return splitChunks(c.text).map((text) => ({ text, slide: null, caption: "" }));
 }
 
-/** chapters: [{label, text} または {label, parts: [{text, slide}]}]。空の章は飛ばす。読み始めたら true。 */
+/** chapters: [{label, text} または {label, parts: [{text, slide, caption}]}]。空の章は飛ばす。読み始めたら true。 */
 export function read({ title: t, chapters, startAt = 0 }) {
   if (!supported) return false;
   const q = (chapters ?? [])
@@ -161,6 +184,7 @@ export function read({ title: t, chapters, startAt = 0 }) {
   pos = { c: Math.min(Math.max(0, startAt), q.length - 1), k: 0 };
   title = t;
   status = "playing";
+  remember();
   speakSoon();
   notify();
   return true;
@@ -182,6 +206,7 @@ export function pause() {
   token++;
   synth.cancel();
   status = "paused";
+  remember();
   notify();
 }
 
@@ -199,11 +224,17 @@ export function toggle() {
 
 export function jump(delta) {
   if (status === "idle") return;
-  const c = pos.c + delta;
-  if (c < 0 || c >= queue.length) return delta > 0 ? finish() : undefined;
+  jumpTo(pos.c + delta, delta > 0);
+}
+
+/** 章を指定して飛ぶ(再生バーの章の印・番組表)。最後の章より先へ進めたとき(pastEndFinishes)は、終わりにする。 */
+export function jumpTo(c, pastEndFinishes = false) {
+  if (status === "idle") return;
+  if (!Number.isInteger(c) || c < 0 || c >= queue.length) return pastEndFinishes && c >= queue.length ? finish() : undefined;
   token++;
   synth.cancel();
   pos = { c, k: 0 };
+  remember();
   if (status === "playing") speakSoon();
   notify();
 }
@@ -211,6 +242,7 @@ export function jump(delta) {
 export function stop() {
   if (!supported) return;
   if (status === "idle") return;
+  remember(); // やめた章を覚える(次に「続きから」で聞ける)
   finish();
   synth.cancel();
 }
@@ -282,6 +314,7 @@ export function initPlayerUI() {
   const sleepSel = $("player-sleep");
   const sfxBox = $("player-sfx");
   const lamp = $("player-lamp");
+  const marksEl = $("player-marks");
 
   $("player-prev").addEventListener("click", () => jump(-1));
   $("player-next").addEventListener("click", () => jump(1));
@@ -330,7 +363,77 @@ export function initPlayerUI() {
     progressEl.textContent = s.chapterCount ? `${s.chapterIndex + 1} / ${s.chapterCount}` : "";
     toggleBtn.textContent = s.status === "playing" ? "一時停止" : "再生";
     toggleBtn.setAttribute("aria-pressed", String(s.status === "paused"));
+    renderMarks(marksEl, s);
+    syncMediaSession(s);
   });
+  initMediaSession();
 
   window.addEventListener("pagehide", () => stop());
+}
+
+// ------------------------------------------------------------------ 章の印つきの再生バー
+
+let marksKey = "";
+
+/** 章ごとの印(押すと、その章へ飛ぶ)。聞き終えた章は塗り、いまの章は強調する。章の並びが変わったときだけ作り直す。 */
+function renderMarks(el, s) {
+  if (!el) return;
+  const key = s.chapters.join("\u0000");
+  if (key !== marksKey) {
+    marksKey = key;
+    el.replaceChildren(
+      ...s.chapters.map((label, i) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "mark";
+        b.title = `${i + 1}. ${label}`;
+        b.setAttribute("aria-label", `${i + 1}章 ${label}`);
+        b.addEventListener("click", () => jumpTo(i));
+        return b;
+      }),
+    );
+  }
+  el.hidden = s.chapters.length < 2;
+  [...el.children].forEach((b, i) => {
+    b.classList.toggle("done", i < s.chapterIndex);
+    if (i === s.chapterIndex) b.setAttribute("aria-current", "true");
+    else b.removeAttribute("aria-current");
+  });
+}
+
+// ------------------------------------------------------------------ ロック画面・イヤホンの操作(Media Session API)
+// 対応するブラウザだけ。読み上げ(speechSynthesis)は、音声ファイルの再生ではないので、
+// 端末・ブラウザによっては、ロック画面に出ない・イヤホンの操作が届かないことがある(実機では未確認)。
+
+function initMediaSession() {
+  const ms = typeof navigator !== "undefined" ? navigator.mediaSession : null;
+  if (!ms) return;
+  const handlers = {
+    play: () => resume(),
+    pause: () => pause(),
+    previoustrack: () => jump(-1),
+    nexttrack: () => jump(1),
+    stop: () => stop(),
+  };
+  for (const [action, fn] of Object.entries(handlers)) {
+    try {
+      ms.setActionHandler(action, fn);
+    } catch {
+      /* このブラウザが知らない操作は、飛ばす */
+    }
+  }
+}
+
+function syncMediaSession(s) {
+  const ms = typeof navigator !== "undefined" ? navigator.mediaSession : null;
+  if (!ms) return;
+  try {
+    ms.playbackState = s.status === "playing" ? "playing" : s.status === "paused" ? "paused" : "none";
+    ms.metadata =
+      s.status === "idle" || typeof MediaMetadata === "undefined"
+        ? null
+        : new MediaMetadata({ title: s.chapter || s.title, artist: "Research Broadcast", album: s.title });
+  } catch {
+    /* 設定できなくても、再生はできる */
+  }
 }

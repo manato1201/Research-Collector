@@ -98,9 +98,11 @@ const BODY = { open: openBody, corner: cornerBody, item: itemBody, recommend: re
  */
 export function buildStage({ program, weekly = null }) {
   const kicker = h("span", { class: "stage-kicker" }, "いま読んでいる話題");
+  // 字幕: いま読んでいる部分の、表示用の文(読み上げ用の「読み」ではなく、正しい表記)。読んでいないときは隠す
+  const caption = h("p", { class: "stage-caption", hidden: true });
   const progress = h("span", { class: "stage-progress num" });
   let body = h("div", { class: "stage-body" });
-  const el = h("section", { class: "stage", "aria-label": "いま読んでいる話題(画面)" }, h("div", { class: "stage-head" }, kicker, progress), body);
+  const el = h("section", { class: "stage", "aria-label": "いま読んでいる話題(画面)" }, h("div", { class: "stage-head" }, kicker, progress), caption, body);
 
   const idleSlide = program.corners[0]?.parts?.[0]?.slide ?? null;
   let shown = Symbol("none");
@@ -124,6 +126,9 @@ export function buildStage({ program, weekly = null }) {
     const key = mine ? snap.slide : null;
     progress.textContent = mine ? `${snap.chapterIndex + 1} / ${snap.chapterCount}` : "";
     kicker.textContent = mine ? snap.chapter : "いま読んでいる話題";
+    const cap = mine ? (snap.caption ?? "") : "";
+    if (caption.textContent !== cap) caption.textContent = cap;
+    caption.hidden = !cap;
     if (key === shown) return; // 同じ画面のときは描き直さない(ちらつかせない)
     shown = key;
     render(key, !mine);

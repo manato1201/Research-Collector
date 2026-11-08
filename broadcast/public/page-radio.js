@@ -81,7 +81,8 @@ export function programChapters(program) {
     label: c.label,
     text: c.speech,
     jingle: c.jingle,
-    parts: c.parts.map((p) => ({ text: p.speech, slide: p.slide })),
+    // text = 読み上げ用(読みに直した文)/ caption = 字幕用(正しい表記)。「読み」と「表示」を分けて持つ
+    parts: c.parts.map((p) => ({ text: p.speech, caption: p.text, slide: p.slide })),
   }));
 }
 
@@ -110,6 +111,10 @@ export async function pageRadio(view, params) {
 
   const chapters = programChapters(program);
   const stage = buildStage({ program, weekly });
+  // この端末の記録(止めた章・聞き終えた回。radio-memory.js)
+  const heard = player.heardTitles();
+  const isHeard = (d) => heard.has(`${d} の放送`);
+  const saved = player.supported ? player.savedPosition(program.title, chapters.length) : null;
 
   // 番組表: コーナーごとの開始時刻(速度 1 倍の目安)
   let offset = 0;
@@ -156,11 +161,20 @@ export async function pageRadio(view, params) {
     "番組を再生",
   );
   const stopBtn = h("button", { class: "btn", type: "button", onclick: () => player.stop() }, "停止");
+  // 前回、途中でやめた章から聞く(最初の章でやめたときは、頭から聞くのと同じなので出さない)
+  const resumeBtn =
+    saved && saved.c > 0
+      ? h(
+          "button",
+          { class: "btn", type: "button", "data-resume": String(saved.c), onclick: () => player.read({ title: program.title, chapters, startAt: saved.c }) },
+          `続きから(${saved.label || `${saved.c + 1}章`})`,
+        )
+      : null;
 
   const dateSelect = h(
     "select",
     { class: "btn", "aria-label": "放送の日付を選ぶ", onchange: (ev) => navigate(`/radio?d=${ev.target.value}`) },
-    ...datesRes.dates.map((d) => h("option", { value: d, selected: d === date }, d)),
+    ...datesRes.dates.map((d) => h("option", { value: d, selected: d === date }, isHeard(d) ? `✓ ${d}` : d)),
   );
 
   const sleepSel = h(
@@ -207,7 +221,8 @@ export async function pageRadio(view, params) {
       ),
       eq,
     ),
-    h("div", { class: "row-controls" }, dateSelect, playAll, stopBtn, sleepSel, h("label", { class: "player-check" }, sfxBox, " 効果音")),
+    h("div", { class: "row-controls" }, dateSelect, playAll, resumeBtn, stopBtn, sleepSel, h("label", { class: "player-check" }, sfxBox, " 効果音")),
+    isHeard(date) ? h("p", { class: "fig-note", "data-heard": "1" }, "✓ この回は、最後まで聞いています(この端末だけの記録です)。") : null,
     player.supported
       ? null
       : h("p", { class: "tool-note" }, "このブラウザは読み上げに対応していないため、再生できません。原稿は下で読めます。"),

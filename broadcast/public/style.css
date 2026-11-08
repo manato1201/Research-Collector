@@ -1004,10 +1004,10 @@ select.btn {
   color: var(--warn);
 }
 body.has-player main {
-  padding-bottom: 7rem;
+  padding-bottom: 8.5rem;
 }
 body.has-player .toasts {
-  bottom: 6.5rem;
+  bottom: 8rem;
 }
 
 /* ---------- 速報ティッカー(停止できる) ---------- */
@@ -1915,4 +1915,55 @@ body[data-offline="1"] .status-bar::after {
   .tidy-card:not([data-swipe]) {
     transition: transform 0.18s ease-out;
   }
+}
+
+/* ---------- ラジオ: 字幕・章の印つき再生バー(外部資料 第6弾 Z66) ---------- */
+.stage-caption {
+  margin: 0 0 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface2);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  line-height: 1.7;
+}
+.player-marks {
+  display: flex;
+  gap: 3px;
+  flex: 1 1 100%; /* 再生バーの中で、1行ぶん全幅を使う */
+  margin: 0;
+}
+.player-marks[hidden] {
+  display: none;
+}
+.player-marks .mark {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  position: relative;
+}
+.player-marks .mark::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.player-marks .mark.done::before {
+  background: var(--new);
+}
+.player-marks .mark[aria-current="true"]::before {
+  background: var(--accent);
+  height: 10px;
+  margin-top: -5px;
+}
+.player-marks .mark:hover::before {
+  filter: brightness(1.2);
 }

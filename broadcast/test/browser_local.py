@@ -510,6 +510,49 @@ with sync_playwright() as p:
         page.evaluate("import('/player.js').then((p) => p.stop())")
         page.wait_for_selector(".stage .stage-hint", timeout=5000)
         check("stage: returns to the hint when playback stops", page.locator(".stage .stage-hint").count() == 1)
+    # --- ラジオの聞きやすさ・字幕(外部資料 第6弾 Z66): 章の印つき再生バー・字幕・Media Session・止めた位置・聞き終えた回
+    if page.locator("#player-toggle").count():
+        radio_title = page.evaluate("document.querySelector('.radio-hero time').textContent") + " の放送"
+        page.evaluate("localStorage.removeItem('rb-radio-pos'); localStorage.removeItem('rb-radio-heard')")
+        n_rows = page.locator(".guide-row").count()
+        page.locator(".guide-row").nth(2).locator("button").click()
+        page.wait_for_selector("#player:not([hidden])", timeout=5000)
+        check("radio: the player bar has one chapter mark per corner, and the current one is marked",
+              page.locator("#player-marks .mark").count() == n_rows and page.locator("#player-marks .mark[aria-current=true]").count() == 1
+              and page.locator("#player-marks").is_visible(), (n_rows,))
+        check("radio: chapter marks are labelled buttons (title / aria-label)",
+              all((page.locator("#player-marks .mark").nth(i).get_attribute("aria-label") or "").startswith(f"{i + 1}章") for i in range(n_rows)))
+        check("radio: earlier chapters are filled (done) and later ones are not",
+              page.locator("#player-marks .mark.done").count() == 2)
+        cap = page.locator(".stage-caption")
+        check("radio: a subtitle shows the sentence being read (the display text)", cap.is_visible() and len(cap.inner_text().strip()) > 5, cap.inner_text())
+        ms = page.evaluate("({s: navigator.mediaSession ? navigator.mediaSession.playbackState : null, t: navigator.mediaSession && navigator.mediaSession.metadata ? navigator.mediaSession.metadata.title : null, a: navigator.mediaSession && navigator.mediaSession.metadata ? navigator.mediaSession.metadata.artist : null})")
+        check("radio: Media Session carries the chapter as the title (lock screen / earphones)", ms["t"] and ms["a"] == "Research Broadcast" and ms["s"] in ("playing", "paused"), ms)
+        page.locator("#player-marks .mark").nth(4).click()
+        check("radio: clicking a chapter mark jumps to that chapter", page.inner_text("#player-progress").startswith("5 /") and page.locator("#player-marks .mark.done").count() == 4,
+              page.inner_text("#player-progress"))
+        page.click("#player-stop")
+        saved = page.evaluate("JSON.parse(localStorage.getItem('rb-radio-pos') || '[]')")
+        check("radio: stopping remembers the chapter (this device only)", any(e["title"] == radio_title and e["c"] == 4 for e in saved), saved)
+        page.reload()
+        page.wait_for_selector(".guide-row")
+        resume = page.locator("button[data-resume]")
+        check("radio: a 'continue from' button appears with the chapter name", resume.count() == 1 and resume.inner_text().startswith("続きから(") and resume.get_attribute("data-resume") == "4",
+              resume.count() and resume.inner_text())
+        resume.click()
+        page.wait_for_selector("#player:not([hidden])", timeout=5000)
+        check("radio: continuing starts at the remembered chapter", page.inner_text("#player-progress").startswith("5 /"), page.inner_text("#player-progress"))
+        page.click("#player-stop")
+        # 聞き終えた回の印(最後まで聞くと記録される。ここでは記録のある状態を作って、表示を確かめる)
+        page.evaluate("(t) => localStorage.setItem('rb-radio-heard', JSON.stringify([t]))", radio_title)
+        page.reload()
+        page.wait_for_selector(".guide-row")
+        check("radio: a program heard to the end is marked (note and a check in the date list)",
+              page.locator(".fig-note[data-heard]").count() == 1 and "✓" in page.locator("select[aria-label='放送の日付を選ぶ'] option[selected]").inner_text(),
+              page.locator("select[aria-label='放送の日付を選ぶ'] option").first.inner_text())
+        page.evaluate("localStorage.removeItem('rb-radio-pos'); localStorage.removeItem('rb-radio-heard')")
+        check("radio: nothing is remembered for a single-article reading",
+              page.evaluate("import('/player.js').then((p) => p.savedPosition('ある記事', 5))") is None)
     page.goto(BASE + "/")
     page.wait_for_selector(".lanes")
     check("home: an overview figure of today's counts by category",
