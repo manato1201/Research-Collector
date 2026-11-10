@@ -122,3 +122,69 @@ export function sameOrigin(request, url) {
     return false;
   }
 }
+
+// ------------------------------------------------------------------ Cloudflare Access(複数人で使うときのログイン)
+//
+// Access をこのサイトの前に置くと、通過したリクエストに `Cf-Access-Jwt-Assertion`(署名つきの JWT)が付く。
+// ここではその JWT を検証し、メールアドレスで「誰か」を決める。守っていること:
+//   - 署名(RS256 だけ。none / HS256 は受け付けない)・発行者(iss)・宛先(aud)・期限(exp / nbf)を必ず検証する。
+//     ヘッダーを偽装しても、Cloudflare の秘密鍵が無ければ通らない。
+//   - 公開鍵は https://<チーム>.cloudflareaccess.com/cdn-cgi/access/certs(JWKS)から取る(取得は index.js 側)。
+//   - 失敗の理由は返さない(null)。
+
+const decodeJsonSegment = (segment) => JSON.parse(new TextDecoder().decode(fromBase64Url(segment)));
+
+/** "https://x.cloudflareaccess.com/" → "x.cloudflareaccess.com" */
+export function normalizeTeamDomain(raw) {
+  return String(raw ?? "")
+    .trim()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
+}
+
+/** 許可するメールアドレスの一覧(カンマ区切り・小文字)。 */
+export function parseEmailList(raw) {
+  return String(raw ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/**
+ * Access の JWT を検証して、claims を返す。1 つでも合わなければ null(例外は投げない)。
+ * jwks = { keys: [{ kid, kty: "RSA", n, e }, ...] }
+ */
+export async function verifyAccessJwt(token, { teamDomain, aud, jwks, nowSec = Math.floor(Date.now() / 1000), leeway = 30 }) {
+  try {
+    if (typeof token !== "string" || !teamDomain || !aud) return null;
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const header = decodeJsonSegment(parts[0]);
+    if (header.alg !== "RS256" || typeof header.kid !== "string") return null;
+    const jwk = jwks?.keys?.find((k) => k.kid === header.kid && k.kty === "RSA");
+    if (!jwk) return null;
+    const key = await crypto.subtle.importKey(
+      "jwk",
+      { kty: "RSA", n: jwk.n, e: jwk.e, alg: "RS256", ext: true },
+      { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      false,
+      ["verify"],
+    );
+    const valid = await crypto.subtle.verify(
+      "RSASSA-PKCS1-v1_5",
+      key,
+      fromBase64Url(parts[2]),
+      enc.encode(`${parts[0]}.${parts[1]}`),
+    );
+    if (!valid) return null;
+    const claims = decodeJsonSegment(parts[1]);
+    if (claims.iss !== `https://${teamDomain}`) return null;
+    const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+    if (!audiences.includes(aud)) return null;
+    if (typeof claims.exp !== "number" || claims.exp + leeway <= nowSec) return null;
+    if (typeof claims.nbf === "number" && claims.nbf - leeway > nowSec) return null;
+    return claims;
+  } catch {
+    return null;
+  }
+}

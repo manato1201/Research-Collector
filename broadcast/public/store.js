@@ -69,6 +69,10 @@ export async function api(path, { method = "GET", body } = {}) {
   } catch {
     /* 本文なし */
   }
+  // Cloudflare Access を通っても、許可リスト(ACCESS_ALLOWED_EMAILS)に無い人
+  if (res.status === 403 && data?.error === "forbidden") {
+    throw new Error("このアカウントには、このサイトの利用が許可されていません。管理者に依頼してください");
+  }
   if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
   return data;
 }

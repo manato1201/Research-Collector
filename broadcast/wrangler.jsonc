@@ -23,6 +23,15 @@
     // "false" にすると /api/* の読み出し・ボードをログイン無しで使える。Cloudflare Access が、このWorkerの
     // 全ホスト名(workers.dev を含む)を保護していると確認できたときだけ変更すること。
     "READ_REQUIRES_TOKEN": "true",
+    // ---- 複数人で使う(Cloudflare Access)。README「複数人で使う」参照。3 つとも設定したときだけ有効。
+    // Zero Trust でこの Worker を「Self-hosted application」として保護し(workers.dev も含める)、
+    //   CF_ACCESS_TEAM_DOMAIN = <チーム名>.cloudflareaccess.com
+    //   CF_ACCESS_AUD         = そのアプリケーションの Application Audience (AUD) Tag
+    //   ACCESS_ALLOWED_EMAILS = このサイトを使ってよい人のメールアドレス(カンマ区切り)。載っていない人は、Access を通っても 403
+    // 秘密ではない値なので vars でよい(メールアドレスを公開リポジトリに入れたくないときは、wrangler secret put ACCESS_ALLOWED_EMAILS)。
+    // "CF_ACCESS_TEAM_DOMAIN": "",
+    // "CF_ACCESS_AUD": "",
+    // "ACCESS_ALLOWED_EMAILS": "",
     // 記事・日次 episode の保持日数(設計 §4.3。articles_log.json と同じ90日)
     "RETENTION_DAYS": "90"
   },

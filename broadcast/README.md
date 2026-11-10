@@ -241,6 +241,30 @@ gh secret set BROADCAST_INGEST_TOKEN   # INGEST_TOKEN と同じ値
 - `READ_REQUIRES_TOKEN` を `"false"` にするのは、**Cloudflare Access で、この Worker の全ホスト名(`workers.dev` を含む)を保護した後だけ**。保護していない状態で `"false"` にすると、記事・ボードが誰にでも読み書きできる。
 - Access のサービス認証(`CF-Access-Client-Id` / `CF-Access-Client-Secret`)を使う場合は、Actions の Secret `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` を設定すれば、送信側が付けて送る。
 
+### 複数人で使う(Cloudflare Access)
+
+既定は 1 人用(Bearer とパスワード)。複数人で使うときは、ログインを **Cloudflare Access** に任せる(パスワードの共有をやめられる)。Worker は Access の JWT を検証して、メールアドレスで「誰か」を決める。
+
+**ボード・ピン/見直す日・設定は、人ごとに別々**になる(`0008_owner.sql`。メールアドレスが持ち主)。記事・episode・レポートは全員で共通。Bearer(機械)とパスワードのログインは、従来どおり 1 つの持ち主(空)で動く。
+
+1. **先に migration を適用する**(新しいコードは `owner` 列を使うため、**デプロイより前**): `npx wrangler d1 migrations apply DB --remote`。既存のボード・ピン・設定は、持ち主「空」として残る。
+2. Zero Trust ダッシュボードで、この Worker を **Self-hosted application** として保護する(`workers.dev` を含む**全ホスト名**。ポリシーは使ってよい人のメール)。
+3. `wrangler.jsonc` の `vars`(または `wrangler secret put`)に、次の 3 つを設定してデプロイする。
+   - `CF_ACCESS_TEAM_DOMAIN` = `<チーム名>.cloudflareaccess.com`
+   - `CF_ACCESS_AUD` = そのアプリケーションの **Application Audience (AUD) Tag**
+   - `ACCESS_ALLOWED_EMAILS` = 使ってよい人のメールアドレス(カンマ区切り)
+4. 確認: Access 経由でサイトを開き、`/api/session` が `{"authenticated": true, "via": "access", "email": "…"}` を返す。別のメールの人でボードが混ざらないこと。
+
+守っていること(`src/auth.js`・`test/access.test.js`):
+- **署名・発行者・宛先・期限を必ず検証**する(RS256 だけ。`none`・`HS256`・別の鍵での署名・中身のすり替えは拒否)。公開鍵(JWKS)は 1 時間キャッシュし、検証に失敗したときの取り直しは 1 分に 1 回まで。
+- **許可リストに無い人は 403**(Access を通っただけでは使えない。自動では許可しない)。`ACCESS_ALLOWED_EMAILS` が空なら全員 403(fail-closed)。
+- **不正な Access の JWT が付いているときは、Cookie や Bearer に落とさず 401**。
+- Access のクッキーはブラウザが自動で送るので、**書き込みは Origin が同じホストのときだけ**(パスワードのセッションと同じ CSRF 対策)。
+- **機械用のエンドポイント(`/api/ingest`・`/api/enrich`・`/api/export`)は Bearer のまま**。Access で入った人は使えない(Workers AI の無料枠とバックアップを守る)。
+- `READ_REQUIRES_TOKEN="false"` のときも、有効な Access の JWT があれば持ち主だけは決まる(無ければ空)。
+
+アプリ内の管理者の役割は作っていない: 収集元・収集の設定は、このサイトではなくリポジトリ側(GitHub Actions のコレクター)にあり、人ごとの設定(ウォッチワード・非表示の収集元)は各自のもの。パスワード方式を使わないなら `VIEW_PASSWORD` を設定しなければよい(ログインの入口が無くなる)。
+
 ## 未確認
 
 - **本番での確認(2026-10-11)**: 認証(未ログインは 401)・実クライアントによる取り込み(記事40件 + episode 8件が1バッチで成功。約2.5秒)・再送で増えないこと・パスワードのログインと Cookie の属性(Secure・HttpOnly・SameSite=Strict)・Origin の異なる書き込みの拒否・実ブラウザでのサイト操作を確認した。

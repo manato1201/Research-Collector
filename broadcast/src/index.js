@@ -41,13 +41,16 @@ import {
 } from "./insights.js";
 import { LOGIN_WINDOW_SEC, recordFailure, throttleKey, throttleState } from "./throttle.js";
 import {
+  normalizeTeamDomain,
   parseCookie,
+  parseEmailList,
   SESSION_COOKIE,
   SESSION_TTL_SECONDS,
   sameOrigin,
   sessionCookieHeader,
   signSession,
   timingSafeEqualStrings,
+  verifyAccessJwt,
   verifySession,
 } from "./auth.js";
 import {
@@ -119,8 +122,16 @@ async function route(request, env, url) {
   }
   if (pathname === "/api/session") {
     if (method !== "GET") return methodNotAllowed("GET");
-    const who = await whoami(request, env);
-    return json({ authenticated: who !== null, via: who, login_enabled: Boolean(env.VIEW_PASSWORD) });
+    const id = await identify(request, env);
+    if (id?.denied === "forbidden") return json({ error: "forbidden" }, 403);
+    const via = id && !id.denied ? id.via : null;
+    return json({
+      authenticated: via !== null,
+      via,
+      email: via === "access" ? id.owner : null,
+      login_enabled: Boolean(env.VIEW_PASSWORD),
+      access_enabled: accessEnabled(env),
+    });
   }
 
   // ---- 取り込み(機械。Bearer のみ)
@@ -142,11 +153,11 @@ async function route(request, env, url) {
 
   if (pathname === "/api/board/bulk") {
     if (method !== "POST") return methodNotAllowed("POST");
-    return withAuth(request, env, url, true, () => handleBoardBulk(request, env));
+    return withAuth(request, env, url, true, (who) => handleBoardBulk(request, env, who.owner));
   }
   if (pathname === "/api/board/import") {
     if (method !== "POST") return methodNotAllowed("POST");
-    return withAuth(request, env, url, true, () => handleBoardImport(request, env));
+    return withAuth(request, env, url, true, (who) => handleBoardImport(request, env, who.owner));
   }
 
   // バックアップ用の書き出しは、機械(Bearer)だけ。Cookie では許可しない
@@ -160,29 +171,29 @@ async function route(request, env, url) {
   const pref = /^\/api\/prefs\/([a-z_]+)$/.exec(pathname);
   if (pref) {
     if (method !== "PUT") return methodNotAllowed("PUT");
-    return withAuth(request, env, url, true, () => handlePrefWrite(request, env, pref[1]));
+    return withAuth(request, env, url, true, (who) => handlePrefWrite(request, env, pref[1], who.owner));
   }
 
   const board = /^\/api\/board(?:\/([^/]+))?$/.exec(pathname);
   if (board) {
     if (board[1] === undefined) {
       if (method !== "GET") return methodNotAllowed("GET");
-      return withAuth(request, env, url, false, () => handleBoardList(env));
+      return withAuth(request, env, url, false, (who) => handleBoardList(env, who.owner));
     }
     if (!["PUT", "DELETE"].includes(method)) return methodNotAllowed("PUT, DELETE");
     if (!isUrlHash(board[1])) return json({ error: "bad_url_hash" }, 400);
-    return withAuth(request, env, url, true, () => handleBoardWrite(request, env, board[1], method));
+    return withAuth(request, env, url, true, (who) => handleBoardWrite(request, env, board[1], method, who.owner));
   }
 
   const mark = /^\/api\/marks(?:\/([^/]+))?$/.exec(pathname);
   if (mark) {
     if (mark[1] === undefined) {
       if (method !== "GET") return methodNotAllowed("GET");
-      return withAuth(request, env, url, false, () => handleMarksList(env));
+      return withAuth(request, env, url, false, (who) => handleMarksList(env, who.owner));
     }
     if (!["PUT", "DELETE"].includes(method)) return methodNotAllowed("PUT, DELETE");
     if (!isUrlHash(mark[1])) return json({ error: "bad_url_hash" }, 400);
-    return withAuth(request, env, url, true, () => handleMarkWrite(request, env, mark[1], method));
+    return withAuth(request, env, url, true, (who) => handleMarkWrite(request, env, mark[1], method, who.owner));
   }
 
   const report = /^\/api\/reports\/([^/]+)$/.exec(pathname);
@@ -202,15 +213,15 @@ async function route(request, env, url) {
     "/api/categories": () => handleCategories(env),
     "/api/search": () => handleSearch(url, env),
     "/api/insights": () => handleInsights(url, env),
-    "/api/watchwords": () => handleWatchwords(env),
-    "/api/prefs": () => handlePrefsRead(env),
+    "/api/watchwords": (who) => handleWatchwords(env, who.owner),
+    "/api/prefs": (who) => handlePrefsRead(env, who.owner),
     "/api/sources": () => handleSources(env),
     "/api/episodes": () => handleEpisodes(url, env),
     "/api/episodes/dates": () => handleEpisodeDates(url, env),
     "/api/status": () => handleStatus(env),
     "/api/reports": () => handleReportList(url, env),
     "/api/watch": () => handleWatch(env),
-    "/api/tidy": () => handleTidy(url, env),
+    "/api/tidy": (who) => handleTidy(url, env, who.owner),
   };
   if (reads[pathname]) {
     if (method !== "GET") return methodNotAllowed("GET");
@@ -222,50 +233,154 @@ async function route(request, env, url) {
 
 // ------------------------------------------------------------------ 認証
 
-/** "bearer" | "session" | "open"(READ_REQUIRES_TOKEN=false)| null */
-async function whoami(request, env) {
+/** Cloudflare Access を使う設定か(チームのドメインと、アプリケーションの AUD の両方がある)。 */
+function accessEnabled(env) {
+  return Boolean(
+    normalizeTeamDomain(env.CF_ACCESS_TEAM_DOMAIN) && env.CF_ACCESS_AUD,
+  );
+}
+
+// Access の公開鍵(JWKS)。Worker のインスタンス内で 1 時間だけ持つ。検証に失敗したときは、鍵の入れ替わり直後かもしれないので、
+// 1 分に 1 回までだけ取り直す(不正なトークンを送り続けられても、取得が増え続けない)。
+const JWKS_TTL_MS = 3_600_000;
+const JWKS_MIN_REFETCH_MS = 60_000;
+let jwksCache = { team: "", at: 0, value: null };
+
+async function loadJwks(team, { force = false } = {}) {
+  const now = Date.now();
+  const cached = jwksCache.team === team && jwksCache.value ? jwksCache : null;
+  if (cached && !force && now - cached.at < JWKS_TTL_MS) return cached.value;
+  if (cached && force && now - cached.at < JWKS_MIN_REFETCH_MS)
+    return cached.value;
+  try {
+    const res = await fetch(`https://${team}/cdn-cgi/access/certs`, {
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) throw new Error(`status ${res.status}`);
+    const value = await res.json();
+    jwksCache = { team, at: now, value };
+    return value;
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        message: "access jwks fetch failed",
+        error: String(err?.message ?? err).slice(0, 120),
+      }),
+    );
+    return cached ? cached.value : null;
+  }
+}
+
+async function verifyAccess(token, env) {
+  const teamDomain = normalizeTeamDomain(env.CF_ACCESS_TEAM_DOMAIN);
+  const check = (jwks) =>
+    verifyAccessJwt(token, { teamDomain, aud: env.CF_ACCESS_AUD, jwks });
+  const jwks = await loadJwks(teamDomain);
+  let claims = jwks ? await check(jwks) : null;
+  if (!claims) {
+    const fresh = await loadJwks(teamDomain, { force: true });
+    if (fresh && fresh !== jwks) claims = await check(fresh);
+  }
+  return claims;
+}
+
+/**
+ * 誰が来たか。{ via: "bearer" | "session" | "access", owner } | { denied: "unauthorized" | "forbidden" } | null
+ *   owner = ボード・ピン・設定の持ち主。Access で入った人はメールアドレス(小文字)、それ以外(機械・パスワード)は ''(従来の 1 人用)。
+ *   Access の JWT が付いているのに不正なら、他の方式には落とさず denied にする(偽装して別の経路に回られないように)。
+ *   Access を通っても ACCESS_ALLOWED_EMAILS に無い人は forbidden(自動では許可しない)。
+ */
+async function identify(request, env) {
   const header = request.headers.get("authorization") ?? "";
-  if (header.startsWith("Bearer ") && env.INGEST_TOKEN && (await timingSafeEqualStrings(header.slice(7), env.INGEST_TOKEN))) {
-    return "bearer";
+  if (
+    header.startsWith("Bearer ") &&
+    env.INGEST_TOKEN &&
+    (await timingSafeEqualStrings(header.slice(7), env.INGEST_TOKEN))
+  ) {
+    return { via: "bearer", owner: "" };
+  }
+  const accessToken = request.headers.get("cf-access-jwt-assertion");
+  if (accessToken && accessEnabled(env)) {
+    const claims = await verifyAccess(accessToken, env);
+    if (!claims) return { denied: "unauthorized" };
+    const email = String(claims.email ?? "")
+      .trim()
+      .toLowerCase();
+    if (!email || !parseEmailList(env.ACCESS_ALLOWED_EMAILS).includes(email))
+      return { denied: "forbidden" };
+    return { via: "access", owner: email };
   }
   const cookie = parseCookie(request.headers.get("cookie"), SESSION_COOKIE);
-  if (cookie && env.VIEW_PASSWORD && (await verifySession(env.VIEW_PASSWORD, cookie))) {
-    return "session";
+  if (
+    cookie &&
+    env.VIEW_PASSWORD &&
+    (await verifySession(env.VIEW_PASSWORD, cookie))
+  ) {
+    return { via: "session", owner: "" };
   }
   return null;
+}
+
+/** "bearer" | "session" | "access" | null(従来どおり。機械用の判定に使う) */
+async function whoami(request, env) {
+  const id = await identify(request, env);
+  return id && !id.denied ? id.via : null;
 }
 
 async function requireBearer(request, env) {
   if (!env.INGEST_TOKEN) {
     // トークン未設定のまま公開してしまう事故を防ぐ(未設定 = 全拒否)
-    console.error(JSON.stringify({ message: "INGEST_TOKEN is not configured" }));
+    console.error(
+      JSON.stringify({ message: "INGEST_TOKEN is not configured" }),
+    );
     return json({ error: "server_not_configured" }, 503);
   }
   if ((await whoami(request, env)) !== "bearer") {
-    return json({ error: "unauthorized" }, 401, { "www-authenticate": "Bearer" });
+    return json({ error: "unauthorized" }, 401, {
+      "www-authenticate": "Bearer",
+    });
   }
   return null;
 }
 
 /**
- * 読み出し・ボード用の認証。mutating=true(書き込み)のとき、Cookie 認証なら Origin の一致も要る(CSRF 対策)。
+ * 読み出し・ボード用の認証。handler には { via, owner } を渡す。
+ * mutating=true(書き込み)のとき、Cookie で入った人(パスワードのセッション・Access)は Origin の一致も要る(CSRF 対策。
+ * Access のクッキーもブラウザが自動で送るため)。
  * READ_REQUIRES_TOKEN="false" は「Access などで全ホスト名を保護済み」と運用者が確認した場合のみ。
+ * その場合も、有効な Access の JWT があれば持ち主だけは決める(無ければ '')。
  */
 async function withAuth(request, env, url, mutating, handler) {
-  if (env.READ_REQUIRES_TOKEN === "false") return handler();
+  if (env.READ_REQUIRES_TOKEN === "false") {
+    const id = await identify(request, env).catch(() => null);
+    return handler({ via: "open", owner: id && !id.denied ? id.owner : "" });
+  }
 
-  if (!env.INGEST_TOKEN && !env.VIEW_PASSWORD) {
-    console.error(JSON.stringify({ message: "neither INGEST_TOKEN nor VIEW_PASSWORD is configured" }));
+  if (!env.INGEST_TOKEN && !env.VIEW_PASSWORD && !accessEnabled(env)) {
+    console.error(
+      JSON.stringify({
+        message:
+          "none of INGEST_TOKEN, VIEW_PASSWORD, Cloudflare Access is configured",
+      }),
+    );
     return json({ error: "server_not_configured" }, 503);
   }
-  const who = await whoami(request, env);
-  if (who === null) return json({ error: "unauthorized" }, 401, { "www-authenticate": "Bearer" });
-  if (mutating && who === "session" && !sameOrigin(request, url)) {
+  const id = await identify(request, env);
+  if (id === null || id.denied === "unauthorized") {
+    return json({ error: "unauthorized" }, 401, {
+      "www-authenticate": "Bearer",
+    });
+  }
+  if (id.denied === "forbidden") return json({ error: "forbidden" }, 403);
+  if (
+    mutating &&
+    (id.via === "session" || id.via === "access") &&
+    !sameOrigin(request, url)
+  ) {
     return json({ error: "bad_origin" }, 403);
   }
-  return handler();
+  return handler(id);
 }
-
 async function handleLogin(request, env, url) {
   if (!env.VIEW_PASSWORD) return json({ error: "login_not_configured" }, 503);
   if (!sameOrigin(request, url)) return json({ error: "bad_origin" }, 403);
@@ -384,8 +499,8 @@ VALUES (?, ?, ?, ?, ?)
 ON CONFLICT(url) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at`;
 
 const UPSERT_PREF_SQL = `
-INSERT INTO prefs (key, value, updated_at) VALUES (?, ?, ?)
-ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`;
+INSERT INTO prefs (owner, key, value, updated_at) VALUES (?, ?, ?, ?)
+ON CONFLICT(owner, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`;
 
 const UPSERT_META_SQL =
   "INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value";
@@ -717,7 +832,7 @@ async function handleEnrich(env, url) {
   const limit = Math.min(8, Math.max(1, Number(url.searchParams.get("limit")) || 5));
   const model = env.INSIGHT_MODEL || DEFAULT_INSIGHT_MODEL;
   const noThink = model.includes("qwen3");
-  const { projects } = await readPrefs(env);
+  const { projects } = await readPrefs(env, ""); // 機械(Bearer)は、従来の持ち主 '' の設定を使う
 
   const rows = await env.DB.prepare(`SELECT a.* ${PENDING_SQL} ORDER BY a.collected_at DESC LIMIT ?`)
     .bind(...PENDING_BINDS, limit)
@@ -868,8 +983,8 @@ async function handleSearch(url, env) {
   return json({ q: url.searchParams.get("q").trim(), mode: parsed.useFts ? "fts" : "like", articles: rows.results.map(rowToArticle) });
 }
 
-async function readPrefs(env) {
-  const rows = await env.DB.prepare("SELECT key, value FROM prefs").all();
+async function readPrefs(env, owner) {
+  const rows = await env.DB.prepare("SELECT key, value FROM prefs WHERE owner = ?").bind(owner).all();
   const out = { watchwords: [], muted_sources: [], projects: [] };
   for (const r of rows.results) {
     try {
@@ -881,11 +996,11 @@ async function readPrefs(env) {
   return out;
 }
 
-async function handlePrefsRead(env) {
-  return json(await readPrefs(env));
+async function handlePrefsRead(env, owner) {
+  return json(await readPrefs(env, owner));
 }
 
-async function handlePrefWrite(request, env, key) {
+async function handlePrefWrite(request, env, key, owner) {
   if (!PREF_KEYS.includes(key)) return json({ error: "unknown_pref" }, 404);
   const text = await readBodyLimited(request, 10_000);
   if (text === null) return json({ error: "payload_too_large" }, 413);
@@ -897,13 +1012,13 @@ async function handlePrefWrite(request, env, key) {
   }
   const v = validatePref(key, body?.value);
   if (!v.ok) return json({ error: v.error }, 400);
-  await env.DB.prepare(UPSERT_PREF_SQL).bind(key, JSON.stringify(v.value), new Date().toISOString()).run();
+  await env.DB.prepare(UPSERT_PREF_SQL).bind(owner, key, JSON.stringify(v.value), new Date().toISOString()).run();
   return json({ ok: true, key, value: v.value });
 }
 
 /** ウォッチワードごとの、直近7日(収集した日)の件数と、新しい記事の見出し(3件)。 */
-async function handleWatchwords(env) {
-  const { watchwords } = await readPrefs(env);
+async function handleWatchwords(env, owner) {
+  const { watchwords } = await readPrefs(env, owner);
   if (!watchwords.length) return json({ items: [] });
   const since = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10);
   const parsedAll = watchwords.map((w) => ({ word: w, parsed: parseSearch(w) })).filter((x) => x.parsed.ok);
@@ -941,7 +1056,7 @@ async function handleExport(url, env) {
   return json({ table, offset, count: n, next: n === limit ? offset + n : null, rows: rows.results });
 }
 
-async function handleBoardBulk(request, env) {
+async function handleBoardBulk(request, env, owner) {
   const text = await readBodyLimited(request, 20_000);
   if (text === null) return json({ error: "payload_too_large" }, 413);
   let body;
@@ -962,21 +1077,24 @@ async function handleBoardBulk(request, env) {
   const nowIso = new Date().toISOString();
   let statements;
   if (v.state === "unread") {
-    const del = body.only === "read" ? "DELETE FROM board WHERE url_hash = ? AND state = 'read'" : "DELETE FROM board WHERE url_hash = ?";
-    statements = hashes.map((h) => env.DB.prepare(del).bind(h));
+    const del =
+      body.only === "read"
+        ? "DELETE FROM board WHERE owner = ? AND url_hash = ? AND state = 'read'"
+        : "DELETE FROM board WHERE owner = ? AND url_hash = ?";
+    statements = hashes.map((h) => env.DB.prepare(del).bind(owner, h));
   } else if (v.state === "read") {
     // 「まとめて既読」は、すでに 読む / 試す / 保留 に入れた記事の状態を上書きしない
     statements = hashes.map((h) =>
       env.DB.prepare(
-        "INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, 'read', '', ?) ON CONFLICT(url_hash) DO NOTHING",
-      ).bind(h, nowIso),
+        "INSERT INTO board (owner, url_hash, state, note, updated_at) VALUES (?, ?, 'read', '', ?) ON CONFLICT(owner, url_hash) DO NOTHING",
+      ).bind(owner, h, nowIso),
     );
   } else {
     statements = hashes.map((h) =>
       env.DB.prepare(
-        `INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, '', ?)
-         ON CONFLICT(url_hash) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
-      ).bind(h, v.state, nowIso),
+        `INSERT INTO board (owner, url_hash, state, note, updated_at) VALUES (?, ?, ?, '', ?)
+         ON CONFLICT(owner, url_hash) DO UPDATE SET state = excluded.state, updated_at = excluded.updated_at`,
+      ).bind(owner, h, v.state, nowIso),
     );
   }
   await runInBatches(env.DB, statements);
@@ -987,7 +1105,7 @@ async function handleBoardBulk(request, env) {
  * ボードの読み込み(書き出した JSON から戻す)。既定では、すでにボードにある記事の状態を変えない。
  * overwrite: true のときだけ、既存の状態・メモを上書きする。
  */
-async function handleBoardImport(request, env) {
+async function handleBoardImport(request, env, owner) {
   const text = await readBodyLimited(request, 200_000);
   if (text === null) return json({ error: "payload_too_large" }, 413);
   let body;
@@ -1002,19 +1120,19 @@ async function handleBoardImport(request, env) {
   const existing = new Set();
   for (let i = 0; i < v.items.length; i += 90) {
     const chunk = v.items.slice(i, i + 90);
-    const rows = await env.DB.prepare(`SELECT url_hash FROM board WHERE url_hash IN (${chunk.map(() => "?").join(",")})`)
-      .bind(...chunk.map((it) => it.url_hash))
+    const rows = await env.DB.prepare(`SELECT url_hash FROM board WHERE owner = ? AND url_hash IN (${chunk.map(() => "?").join(",")})`)
+      .bind(owner, ...chunk.map((it) => it.url_hash))
       .all();
     for (const r of rows.results) existing.add(r.url_hash);
   }
   const nowIso = new Date().toISOString();
   const sql = v.overwrite
-    ? `INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT(url_hash) DO UPDATE SET state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`
-    : "INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(url_hash) DO NOTHING";
+    ? `INSERT INTO board (owner, url_hash, state, note, updated_at) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(owner, url_hash) DO UPDATE SET state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`
+    : "INSERT INTO board (owner, url_hash, state, note, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner, url_hash) DO NOTHING";
   await runInBatches(
     env.DB,
-    v.items.map((it) => env.DB.prepare(sql).bind(it.url_hash, it.state, it.note, nowIso)),
+    v.items.map((it) => env.DB.prepare(sql).bind(owner, it.url_hash, it.state, it.note, nowIso)),
   );
   const conflicts = existing.size;
   return json({
@@ -1045,13 +1163,14 @@ const markArticle = (r) =>
       }
     : null;
 
-async function handleMarksList(env) {
+async function handleMarksList(env, owner) {
   const rows = await env.DB.prepare(
     `SELECT m.url_hash, m.pinned, m.remind_on, m.updated_at,
             a.url, a.title, a.platform, a.categories, a.published, a.collected_at, a.summary, a.review
      FROM marks m LEFT JOIN articles a ON a.url_hash = m.url_hash
+     WHERE m.owner = ?
      ORDER BY m.pinned DESC, m.remind_on IS NULL, m.remind_on ASC, m.updated_at DESC LIMIT 500`,
-  ).all();
+  ).bind(owner).all();
   return json({
     items: rows.results.map((r) => ({
       url_hash: r.url_hash,
@@ -1063,10 +1182,10 @@ async function handleMarksList(env) {
   });
 }
 
-async function handleMarkWrite(request, env, urlHash, method) {
+async function handleMarkWrite(request, env, urlHash, method, owner) {
   const nowIso = new Date().toISOString();
   if (method === "DELETE") {
-    await env.DB.prepare("DELETE FROM marks WHERE url_hash = ?").bind(urlHash).run();
+    await env.DB.prepare("DELETE FROM marks WHERE owner = ? AND url_hash = ?").bind(owner, urlHash).run();
     return json({ ok: true, url_hash: urlHash, pinned: false, remind_on: null });
   }
   const text = await readBodyLimited(request, 1_000);
@@ -1081,17 +1200,17 @@ async function handleMarkWrite(request, env, urlHash, method) {
   if (!v.ok) return json({ error: v.error }, 400);
 
   // 書いた項目だけ変える。いまの値と合わせて、どちらも無くなったら行ごと消す
-  const cur = await env.DB.prepare("SELECT pinned, remind_on FROM marks WHERE url_hash = ?").bind(urlHash).first();
+  const cur = await env.DB.prepare("SELECT pinned, remind_on FROM marks WHERE owner = ? AND url_hash = ?").bind(owner, urlHash).first();
   const pinned = Object.hasOwn(v, "pinned") ? v.pinned : cur?.pinned === 1;
   const remindOn = Object.hasOwn(v, "remind_on") ? v.remind_on : (cur?.remind_on ?? null);
   if (!pinned && remindOn === null) {
-    await env.DB.prepare("DELETE FROM marks WHERE url_hash = ?").bind(urlHash).run();
+    await env.DB.prepare("DELETE FROM marks WHERE owner = ? AND url_hash = ?").bind(owner, urlHash).run();
     return json({ ok: true, url_hash: urlHash, pinned: false, remind_on: null });
   }
   await env.DB.prepare(
-    `INSERT INTO marks (url_hash, pinned, remind_on, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(url_hash) DO UPDATE SET pinned = excluded.pinned, remind_on = excluded.remind_on, updated_at = excluded.updated_at`,
-  ).bind(urlHash, pinned ? 1 : 0, remindOn, nowIso).run();
+    `INSERT INTO marks (owner, url_hash, pinned, remind_on, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(owner, url_hash) DO UPDATE SET pinned = excluded.pinned, remind_on = excluded.remind_on, updated_at = excluded.updated_at`,
+  ).bind(owner, urlHash, pinned ? 1 : 0, remindOn, nowIso).run();
   return json({ ok: true, url_hash: urlHash, pinned, remind_on: remindOn, updated_at: nowIso });
 }
 
@@ -1100,13 +1219,13 @@ async function handleMarkWrite(request, env, urlHash, method) {
  * days = 収集してから何日以上たったものを対象にするか。buckets = 7 / 14 / 30 日以上の件数(切り替えの目安)。
  * limit = 0 なら件数だけ。
  */
-async function handleTidy(url, env) {
+async function handleTidy(url, env, owner) {
   const q = parseTidy(url.searchParams);
   if (!q.ok) return json({ error: q.error }, 400);
   const iso = (days) => new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 19) + "Z";
   const unreadWhere =
-    "a.status = 'added' AND NOT EXISTS (SELECT 1 FROM board b WHERE b.url_hash = a.url_hash)" +
-    " AND NOT EXISTS (SELECT 1 FROM marks m WHERE m.url_hash = a.url_hash)" +
+    "a.status = 'added' AND NOT EXISTS (SELECT 1 FROM board b WHERE b.owner = ? AND b.url_hash = a.url_hash)" +
+    " AND NOT EXISTS (SELECT 1 FROM marks m WHERE m.owner = ? AND m.url_hash = a.url_hash)" +
     (q.exclude.length ? ` AND a.platform NOT IN (${q.exclude.map(() => "?").join(",")})` : "");
 
   const cuts = [q.days, ...TIDY_BUCKETS].map(iso);
@@ -1117,13 +1236,13 @@ async function handleTidy(url, env) {
             COALESCE(SUM(a.collected_at < ?), 0) AS d2,
             COALESCE(SUM(a.collected_at < ?), 0) AS d3
      FROM articles a WHERE ${unreadWhere}`,
-  ).bind(...cuts, ...q.exclude).first();
+  ).bind(...cuts, owner, owner, ...q.exclude).first();
 
   let articles = [];
   if (q.limit > 0 && (counts?.stale ?? 0) > 0) {
     const list = await env.DB.prepare(
       `SELECT a.* FROM articles a WHERE ${unreadWhere} AND a.collected_at < ? ORDER BY a.collected_at ASC LIMIT ?`,
-    ).bind(...q.exclude, cuts[0], q.limit).all();
+    ).bind(owner, owner, ...q.exclude, cuts[0], q.limit).all();
     articles = list.results.map(rowToArticle);
   }
   return json({
@@ -1137,13 +1256,14 @@ async function handleTidy(url, env) {
 
 // ------------------------------------------------------------------ ボード
 
-async function handleBoardList(env) {
+async function handleBoardList(env, owner) {
   const rows = await env.DB.prepare(
     `SELECT b.url_hash, b.state, b.note, b.updated_at,
             a.url, a.title, a.platform, a.categories, a.published, a.collected_at, a.summary, a.review
      FROM board b LEFT JOIN articles a ON a.url_hash = b.url_hash
+     WHERE b.owner = ?
      ORDER BY b.updated_at DESC LIMIT 500`,
-  ).all();
+  ).bind(owner).all();
   return json({
     states: BOARD_STATES,
     items: rows.results.map((r) => ({
@@ -1168,11 +1288,11 @@ async function handleBoardList(env) {
   });
 }
 
-async function handleBoardWrite(request, env, urlHash, method) {
+async function handleBoardWrite(request, env, urlHash, method, owner) {
   const nowIso = new Date().toISOString();
 
   if (method === "DELETE") {
-    await env.DB.prepare("DELETE FROM board WHERE url_hash = ?").bind(urlHash).run();
+    await env.DB.prepare("DELETE FROM board WHERE owner = ? AND url_hash = ?").bind(owner, urlHash).run();
     return json({ ok: true, url_hash: urlHash, state: "unread" });
   }
 
@@ -1188,12 +1308,12 @@ async function handleBoardWrite(request, env, urlHash, method) {
   if (!v.ok) return json({ error: v.error }, 400);
 
   if (v.state === "unread") {
-    await env.DB.prepare("DELETE FROM board WHERE url_hash = ?").bind(urlHash).run();
+    await env.DB.prepare("DELETE FROM board WHERE owner = ? AND url_hash = ?").bind(owner, urlHash).run();
     return json({ ok: true, url_hash: urlHash, state: "unread" });
   }
   await env.DB.prepare(
-    `INSERT INTO board (url_hash, state, note, updated_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(url_hash) DO UPDATE SET state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`,
-  ).bind(urlHash, v.state, v.note, nowIso).run();
+    `INSERT INTO board (owner, url_hash, state, note, updated_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(owner, url_hash) DO UPDATE SET state = excluded.state, note = excluded.note, updated_at = excluded.updated_at`,
+  ).bind(owner, urlHash, v.state, v.note, nowIso).run();
   return json({ ok: true, url_hash: urlHash, state: v.state, note: v.note, updated_at: nowIso });
 }
