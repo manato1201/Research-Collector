@@ -1,18 +1,18 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-11-11T09:04:38Z",
-    "collected": 109,
-    "new": 25,
-    "notebooklm_ok": 31,
+    "run_at": "2026-11-11T21:04:53Z",
+    "collected": 108,
+    "new": 19,
+    "notebooklm_ok": 25,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 102,
-    "unclassified": 3,
-    "merged": 4,
+    "unclassified": 2,
+    "merged": 0,
     "by_source": {
-      "Zenn/Qiita": 51,
+      "Zenn/Qiita": 50,
       "Unity/UE": 10,
       "CEDEC": 25,
       "ReleaseNotes": 13,
@@ -21,7 +21,7 @@
     },
     "failed_sources": 0,
     "source_failures": [],
-    "watch_new": 2
+    "watch_new": 0
   },
   "weekly": {
     "status": "ok",
