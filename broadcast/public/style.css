@@ -10,15 +10,15 @@
   --border: #d9d3c3;
   --accent: #5b49d6;
   --accent-ink: #ffffff;
-  --new: #0e7c74;
-  --warn: #b45309;
+  --new: #0d756e;
+  --warn: #a84d08;
   --text: #1c1a16;
   --text-muted: #666050;
   --text-dim: #a8a190;
-  --cat-game: #2f6fd6;
-  --cat-gfx: #3d8a3a;
+  --cat-game: #2865c9;
+  --cat-gfx: #347632;
   --cat-se: #b03a82;
-  --cat-x1: #8a6d1d;
+  --cat-x1: #7f651b;
   --cat-x2: #4b5563;
   --cat-x3: #7f1d1d;
   --cat-x4: #3f6212;
@@ -27,13 +27,23 @@
   --sans: "Noto Sans JP", system-ui, sans-serif;
   --serif: "DM Serif Display", "Noto Serif JP", serif;
 }
+/* 動きの規則(DESIGN.md「動き」)。これから足す動きは、時間とイージングをここから使う(既存の動きは触らない)。
+   動かすのは transform と opacity だけ。動きを減らす設定では、各 @media (prefers-reduced-motion) が止める。 */
+:root {
+  --dur-instant: 120ms; /* 押す・切り替える */
+  --dur-open: 240ms; /* 開く・閉じる */
+  --dur-enter: 300ms; /* 画面の出現(段をずらしても全体で 400ms 以内) */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1); /* 出る */
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0); /* 入る・退く */
+  --ease-move: cubic-bezier(0.4, 0, 0.2, 1); /* 動く */
+}
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #0a0a0f;
     --surface: #111118;
     --surface2: #1a1a24;
     --border: #2a2a3a;
-    --accent: #7c6ef5;
+    --accent: #7e70f5;
     --accent-ink: #0a0a0f;
     --new: #4fd1c5;
     --warn: #f6ad55;
@@ -55,7 +65,7 @@
   --surface: #111118;
   --surface2: #1a1a24;
   --border: #2a2a3a;
-  --accent: #7c6ef5;
+  --accent: #7e70f5;
   --accent-ink: #0a0a0f;
   --new: #4fd1c5;
   --warn: #f6ad55;
@@ -1893,8 +1903,9 @@ body[data-offline="1"] .status-bar::after {
   line-height: 1.5;
   margin: 0.6rem 0 0.4rem;
 }
+/* --text-dim は文字に使わない(図形・無効の印だけ。地に対して 2:1 前後で、文字の基準 4.5:1 に届かない) */
 .tidy-card .dim {
-  color: var(--text-dim);
+  color: var(--text-muted);
 }
 .tidy-actions {
   display: flex;
