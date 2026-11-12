@@ -1,33 +1,29 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-11-12T09:08:55Z",
-    "collected": 132,
-    "new": 22,
-    "notebooklm_ok": 25,
+    "run_at": "2026-11-12T21:09:52Z",
+    "collected": 135,
+    "new": 20,
+    "notebooklm_ok": 27,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 102,
-    "unclassified": 4,
-    "merged": 4,
+    "unclassified": 2,
+    "merged": 0,
     "by_source": {
       "Zenn/Qiita": 51,
       "Unity/UE": 10,
       "CEDEC": 25,
-      "Papers": 23,
+      "Papers": 26,
       "ReleaseNotes": 13,
       "X posts": 0,
       "GameMedia": 10
     },
-    "failed_sources": 4,
+    "failed_sources": 5,
     "source_failures": [
       {
         "source": "semantic_scholar:developer documentation usage behavior",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:video tutorial software learning",
         "error": "HTTP 429 after 5 attempts"
       },
       {
@@ -35,8 +31,16 @@
         "error": "HTTP 429 after 5 attempts"
       },
       {
+        "source": "semantic_scholar:tutorial maintenance technical debt",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:software documentation outdated obsolete",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
         "source": "semantic_scholar",
-        "error": "rate limited (HTTP 429): 6 queries skipped"
+        "error": "rate limited (HTTP 429): 4 queries skipped"
       }
     ],
     "watch_new": 0
