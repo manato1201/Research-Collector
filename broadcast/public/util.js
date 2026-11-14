@@ -2,6 +2,8 @@
 // (app.js から機械的に分割した。挙動は分割前と同じ。全体の方針は app.js の先頭を参照)
 
 
+import { icon } from "./icons.js";
+
 export const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // ------------------------------------------------------------------ 小さな道具
@@ -84,7 +86,12 @@ export const shortDate = (s) => (s && s.length >= 10 ? s.slice(5, 10) : "");
 
 export function toast(message, isError = false) {
   const box = document.getElementById("toasts");
-  const el = h("div", { class: `toast${isError ? " err" : ""}`, role: isError ? "alert" : "status" }, message);
+  const el = h(
+    "div",
+    { class: `toast${isError ? " err" : ""}`, role: isError ? "alert" : "status" },
+    icon(isError ? "alert" : "check", "ico-toast"),
+    h("span", null, message),
+  );
   box.append(el);
   setTimeout(() => el.remove(), 3800);
 }
@@ -118,7 +125,8 @@ export function fadeIn(nodes) {
 
 
 export function renderEmpty(title, text) {
-  return h("div", { class: "empty" }, h("b", null, title), h("span", null, text));
+  // 小さな「放送の印」を添える(弧が内側から順に、1 回だけ現れる。無限には動かさない)
+  return h("div", { class: "empty" }, icon("broadcast", "ico-mascot"), h("b", null, title), h("span", null, text));
 }
 
 export function renderSkeleton() {

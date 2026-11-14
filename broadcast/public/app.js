@@ -28,6 +28,10 @@ import { pageWeekly } from "./page-weekly.js";
 import { pageReport, pageReports } from "./page-reports.js";
 import { pageStatus } from "./page-status.js";
 import { pageAuthRequired } from "./page-auth.js";
+import { decorate } from "./icons.js";
+
+// 固定の HTML(ナビ・ボタン)に、線のアイコンを添える(文字は消さない)
+decorate();
 
 // ルート表(ページのモジュールを、ここで結びつける)
 registerRoutes([
@@ -134,8 +138,13 @@ document.addEventListener("keydown", (ev) => {
   }
 });
 
-document.getElementById("theme-btn").addEventListener("click", () => {
+document.getElementById("theme-btn").addEventListener("click", (ev) => {
   const root = document.documentElement;
+  // 太陽 ⇄ 月は、くるりと回って入れ替わる(1 回きりの動き。動きを減らす設定では CSS が止める)
+  const btn = ev.currentTarget;
+  btn.classList.remove("swap");
+  void btn.offsetWidth;
+  btn.classList.add("swap");
   const current =
     root.getAttribute("data-theme") ?? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   const next = current === "dark" ? "light" : "dark";

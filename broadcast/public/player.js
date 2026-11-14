@@ -10,6 +10,7 @@
 //  - ロック画面・イヤホンの操作(Media Session API)に、再生・一時停止・前後の章をつなぐ(対応するブラウザだけ)。
 
 import { splitChunks } from "./radio-script.js";
+import { setLabel } from "./icons.js";
 import { clearPosition, getPosition, heardSet, markHeard, savePosition } from "./radio-memory.js";
 import { jingle } from "./sfx.js";
 import { isHighQuality, pickBestVoice, rankVoices, voiceLabel } from "./voice.js";
@@ -361,7 +362,8 @@ export function initPlayerUI() {
     titleEl.textContent = s.title;
     chapterEl.textContent = s.chapter;
     progressEl.textContent = s.chapterCount ? `${s.chapterIndex + 1} / ${s.chapterCount}` : "";
-    toggleBtn.textContent = s.status === "playing" ? "一時停止" : "再生";
+    if (s.status === "playing") setLabel(toggleBtn, "pause", "一時停止");
+    else setLabel(toggleBtn, "play", "再生");
     toggleBtn.setAttribute("aria-pressed", String(s.status === "paused"));
     renderMarks(marksEl, s);
     syncMediaSession(s);

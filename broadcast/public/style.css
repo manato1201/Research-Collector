@@ -1956,3 +1956,164 @@ body[data-offline="1"] .status-bar::after {
 .player-marks .mark:hover::before {
   filter: brightness(1.2);
 }
+
+/* ---------- アイコンと、ちいさな遊び(icons.js。DESIGN.md「動き」「アイコン」) ----------
+   線のアイコンは 1 組(24×24・太さ 1.8・currentColor)。文字は消さず、横に添える。
+   動きは、触れたとき・切り替えたとき・現れたときの「1 回きり」だけ(新しい無限ループは足さない)。
+   使う性質は transform と opacity(トークンは上の --dur-* / --ease-*)。動きを減らす設定では、すべて止まる。 */
+.ico {
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  vertical-align: -0.2em;
+}
+.tabs-nav a,
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+}
+.tabs-nav a {
+  padding: 0.25rem 0.6rem; /* アイコンの分、横を詰める(8 つのタブが 1 行に収まるように) */
+}
+.icon-btn .ico {
+  width: 1.3em;
+  height: 1.3em;
+}
+/* 太陽は明るいテーマ、月は暗いテーマで見せる(ボタンには両方を入れてある) */
+#theme-btn .ico-moon {
+  display: none;
+}
+:root[data-theme="dark"] #theme-btn .ico-sun {
+  display: none;
+}
+:root[data-theme="dark"] #theme-btn .ico-moon {
+  display: inline;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) #theme-btn .ico-sun {
+    display: none;
+  }
+  :root:not([data-theme="light"]) #theme-btn .ico-moon {
+    display: inline;
+  }
+}
+.ico-toast {
+  margin-right: 0.5em;
+  vertical-align: -0.25em;
+}
+.toast {
+  display: flex;
+  align-items: center;
+}
+.empty .ico-mascot {
+  display: block;
+  width: 2.6rem;
+  height: 2.6rem;
+  margin: 0 auto 0.6rem;
+  color: var(--accent);
+}
+@media (max-width: 560px) {
+  /* 狭い画面では、ナビはアイコンだけにする(文字は読み上げ用に残す) */
+  .tabs-nav a .lbl {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+  .tabs-nav a {
+    padding: 0.4rem 0.6rem;
+  }
+  .tabs-nav a .ico {
+    width: 1.35em;
+    height: 1.35em;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  /* 触れると、アイコンが小さく首をかしげる(1 回) */
+  .tabs-nav a:hover .ico,
+  .icon-btn:hover .ico {
+    animation: ico-wiggle var(--dur-open) var(--ease-out);
+  }
+  /* 太陽 ⇄ 月: くるりと回って入れ替わる(1 回) */
+  #theme-btn.swap .ico {
+    animation: ico-spin var(--dur-open) var(--ease-out);
+  }
+  /* 成功のチェックは、書かれるように現れる(1 回) */
+  .toast .ico-check path {
+    stroke-dasharray: 24;
+    stroke-dashoffset: 24;
+    animation: ico-draw var(--dur-enter) var(--ease-out) 80ms forwards;
+  }
+  .toast .ico-alert {
+    animation: ico-pop var(--dur-open) var(--ease-out);
+  }
+  /* 空の状態の「放送の印」: 点 → 内側の弧 → 外側の弧の順に、1 回だけ現れる */
+  .empty .ico-mascot > * {
+    animation: ico-fade var(--dur-enter) var(--ease-out) both;
+  }
+  .empty .ico-mascot > :nth-child(2),
+  .empty .ico-mascot > :nth-child(3) {
+    animation-delay: 120ms;
+  }
+  .empty .ico-mascot > :nth-child(4),
+  .empty .ico-mascot > :nth-child(5) {
+    animation-delay: 240ms;
+  }
+}
+@keyframes ico-wiggle {
+  0% {
+    transform: rotate(0);
+  }
+  35% {
+    transform: rotate(-12deg);
+  }
+  70% {
+    transform: rotate(8deg);
+  }
+  100% {
+    transform: rotate(0);
+  }
+}
+@keyframes ico-spin {
+  from {
+    transform: rotate(-90deg) scale(0.7);
+    opacity: 0.3;
+  }
+  to {
+    transform: rotate(0) scale(1);
+    opacity: 1;
+  }
+}
+@keyframes ico-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ico-pop {
+  from {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes ico-fade {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
