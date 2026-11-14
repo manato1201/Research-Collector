@@ -14,6 +14,15 @@
 | テスト | `python -m unittest discover tests`・`python -m pytest tests/test_docs.py`(ネットワーク不要) |
 | 学習資料 | 講義 3 回あり。**保守・拡張の詳しい資料は未作成**(簡易版のみ) |
 
+## 直近の実行(自動で更新される)
+
+<!-- HEALTH_START -->
+| 実行 | 最終実行 | 詳細 |
+|---|---|---|
+| Daily Collect | ✅ 2026-11-13T21:05:16Z | 収集108件 / 新規24件 / NotebookLM追加34件 / 要確認2件 |
+| Weekly Digest | ✅ 2026-11-02T09:04:36Z | 13718文字生成 |
+<!-- HEALTH_END -->
+
 ## できること(概要)
 
 毎日の自動収集・論文の収集(週 2 回)・重複の除去・分類の補助・NotebookLM への自動追加・週次レポート・収集結果ビュー(`results.html`)・ResearchBroadcast への送信(任意)・認証の自動更新。**収集元・手順・設定の詳細は [旧 README の詳細](docs/reference/readme-detail.md)**。
