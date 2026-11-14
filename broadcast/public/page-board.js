@@ -78,7 +78,7 @@ function boardTransfer(items, overwriteBox) {
       toast(overwrite ? `${r.added}件を追加し、${r.updated}件を上書きしました` : `${r.added}件を追加しました(既存の${r.existing}件は変更なし)`);
       navigate(`${location.pathname}${location.search}`);
     } catch (err) {
-      if (err instanceof AuthError) return navigate("/login");
+      if (err instanceof AuthError) return navigate("/auth-required");
       toast("読み込めませんでした。時間をおいてやり直してください", true);
     }
   });

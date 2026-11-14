@@ -1,9 +1,8 @@
-// ResearchBroadcast — 取り込み・記事API・episode・ボード・ログイン。ResearchBroadcast_DESIGN.md §2〜§4
+// ResearchBroadcast — 取り込み・記事API・episode・ボード。ResearchBroadcast_DESIGN.md §2〜§4
 //
 // 機械(GitHub Actions)から:  Authorization: Bearer <INGEST_TOKEN>
 //   POST /api/ingest        記事・episode・失敗の状態を受け取り、D1 に upsert する(冪等)
-// 人(ブラウザ)から:  Cookie(POST /api/login に VIEW_PASSWORD を送ると発行される)
-//   POST /api/login | POST /api/logout | GET /api/session
+// 人(ブラウザ)から:  Cloudflare Access(メールで 1 クリック。パスワードは使わない)。誰が入ったかは GET /api/session
 // どちらでも:
 //   GET  /api/articles      記事の一覧(category / status / since / review / limit / offset)
 //   GET  /api/episodes      今日の放送・週次特集(kind / date=latest|日付 / category)
@@ -39,19 +38,12 @@ import {
   parseTitle,
   titleIsFaithful,
 } from "./insights.js";
-import { LOGIN_WINDOW_SEC, recordFailure, throttleKey, throttleState } from "./throttle.js";
 import {
   normalizeTeamDomain,
-  parseCookie,
   parseEmailList,
-  SESSION_COOKIE,
-  SESSION_TTL_SECONDS,
   sameOrigin,
-  sessionCookieHeader,
-  signSession,
   timingSafeEqualStrings,
   verifyAccessJwt,
-  verifySession,
 } from "./auth.js";
 import {
   BOARD_STATES,
@@ -113,13 +105,7 @@ async function route(request, env, url) {
     return method === "GET" ? json({ ok: true }) : methodNotAllowed("GET");
   }
 
-  // ---- ログイン(人)
-  if (pathname === "/api/login") {
-    return method === "POST" ? handleLogin(request, env, url) : methodNotAllowed("POST");
-  }
-  if (pathname === "/api/logout") {
-    return method === "POST" ? handleLogout(request, url) : methodNotAllowed("POST");
-  }
+  // ---- 誰が入っているか(人は Cloudflare Access で入る)
   if (pathname === "/api/session") {
     if (method !== "GET") return methodNotAllowed("GET");
     const id = await identify(request, env);
@@ -129,7 +115,6 @@ async function route(request, env, url) {
       authenticated: via !== null,
       via,
       email: via === "access" ? id.owner : null,
-      login_enabled: Boolean(env.VIEW_PASSWORD),
       access_enabled: accessEnabled(env),
     });
   }
@@ -285,8 +270,8 @@ async function verifyAccess(token, env) {
 }
 
 /**
- * 誰が来たか。{ via: "bearer" | "session" | "access", owner } | { denied: "unauthorized" | "forbidden" } | null
- *   owner = ボード・ピン・設定の持ち主。Access で入った人はメールアドレス(小文字)、それ以外(機械・パスワード)は ''(従来の 1 人用)。
+ * 誰が来たか。{ via: "bearer" | "access", owner } | { denied: "unauthorized" | "forbidden" } | null
+ *   owner = ボード・ピン・設定の持ち主。Access で入った人はメールアドレス(小文字)、それ以外(機械)は ''。
  *   Access の JWT が付いているのに不正なら、他の方式には落とさず denied にする(偽装して別の経路に回られないように)。
  *   Access を通っても ACCESS_ALLOWED_EMAILS に無い人は forbidden(自動では許可しない)。
  */
@@ -310,18 +295,10 @@ async function identify(request, env) {
       return { denied: "forbidden" };
     return { via: "access", owner: email };
   }
-  const cookie = parseCookie(request.headers.get("cookie"), SESSION_COOKIE);
-  if (
-    cookie &&
-    env.VIEW_PASSWORD &&
-    (await verifySession(env.VIEW_PASSWORD, cookie))
-  ) {
-    return { via: "session", owner: "" };
-  }
   return null;
 }
 
-/** "bearer" | "session" | "access" | null(従来どおり。機械用の判定に使う) */
+/** "bearer" | "access" | null(機械用の判定に使う) */
 async function whoami(request, env) {
   const id = await identify(request, env);
   return id && !id.denied ? id.via : null;
@@ -345,8 +322,8 @@ async function requireBearer(request, env) {
 
 /**
  * 読み出し・ボード用の認証。handler には { via, owner } を渡す。
- * mutating=true(書き込み)のとき、Cookie で入った人(パスワードのセッション・Access)は Origin の一致も要る(CSRF 対策。
- * Access のクッキーもブラウザが自動で送るため)。
+ * mutating=true(書き込み)のとき、Access で入った人は Origin の一致も要る(CSRF 対策。
+ * Access のクッキーはブラウザが自動で送るため)。
  * READ_REQUIRES_TOKEN="false" は「Access などで全ホスト名を保護済み」と運用者が確認した場合のみ。
  * その場合も、有効な Access の JWT があれば持ち主だけは決める(無ければ '')。
  */
@@ -356,11 +333,11 @@ async function withAuth(request, env, url, mutating, handler) {
     return handler({ via: "open", owner: id && !id.denied ? id.owner : "" });
   }
 
-  if (!env.INGEST_TOKEN && !env.VIEW_PASSWORD && !accessEnabled(env)) {
+  if (!env.INGEST_TOKEN && !accessEnabled(env)) {
     console.error(
       JSON.stringify({
         message:
-          "none of INGEST_TOKEN, VIEW_PASSWORD, Cloudflare Access is configured",
+          "neither INGEST_TOKEN nor Cloudflare Access is configured",
       }),
     );
     return json({ error: "server_not_configured" }, 503);
@@ -374,67 +351,13 @@ async function withAuth(request, env, url, mutating, handler) {
   if (id.denied === "forbidden") return json({ error: "forbidden" }, 403);
   if (
     mutating &&
-    (id.via === "session" || id.via === "access") &&
+    id.via === "access" &&
     !sameOrigin(request, url)
   ) {
     return json({ error: "bad_origin" }, 403);
   }
   return handler(id);
 }
-async function handleLogin(request, env, url) {
-  if (!env.VIEW_PASSWORD) return json({ error: "login_not_configured" }, 503);
-  if (!sameOrigin(request, url)) return json({ error: "bad_origin" }, 403);
-
-  const text = await readBodyLimited(request, 2_000);
-  let body;
-  try {
-    body = JSON.parse(text ?? "");
-  } catch {
-    return json({ error: "invalid_json" }, 400);
-  }
-  const password = typeof body?.password === "string" ? body.password : "";
-
-  // 同じ IP からの失敗が続いたら、窓が明けるまで断る(合っているパスワードでも断る)。D1 が使えないときは、制限せずに進める
-  const nowSec = Math.floor(Date.now() / 1000);
-  const key = await throttleKey(request.headers.get("cf-connecting-ip") ?? "unknown");
-  let record = null;
-  try {
-    const row = await env.DB.prepare("SELECT value FROM meta WHERE key = ?").bind(key).first();
-    record = row ? JSON.parse(row.value) : null;
-  } catch (err) {
-    console.error(JSON.stringify({ message: "login throttle read failed", error: String(err?.message ?? err).slice(0, 120) }));
-  }
-  const locked = throttleState(record, nowSec);
-  if (locked.locked) return json({ error: "too_many_attempts" }, 429, { "retry-after": String(locked.retryAfter) });
-
-  if (!(await timingSafeEqualStrings(password, env.VIEW_PASSWORD))) {
-    try {
-      await env.DB.prepare(UPSERT_META_SQL).bind(key, JSON.stringify(recordFailure(record, nowSec))).run();
-    } catch {
-      /* 記録できなくても、拒否は変わらない */
-    }
-    // 総当たりを遅くする(失敗回数の制限に加えて、待ちも入れる。長いパスワードを使うこと)
-    await new Promise((resolve) => setTimeout(resolve, 800));
-    return json({ error: "wrong_password" }, 401);
-  }
-  if (record) {
-    try {
-      await env.DB.prepare("DELETE FROM meta WHERE key = ?").bind(key).run();
-    } catch {
-      /* 失敗の記録が残るだけ。窓が明ければ消える */
-    }
-  }
-  const value = await signSession(env.VIEW_PASSWORD);
-  const secure = url.protocol === "https:";
-  return json({ ok: true }, 200, { "set-cookie": sessionCookieHeader(value, SESSION_TTL_SECONDS, secure) });
-}
-
-function handleLogout(request, url) {
-  // 他のサイトから、勝手にログアウトさせられないように(Cookie 認証の書き込みと同じ、Origin の確認)
-  if (!sameOrigin(request, url)) return json({ error: "bad_origin" }, 403);
-  return json({ ok: true }, 200, { "set-cookie": sessionCookieHeader("", 0, url.protocol === "https:") });
-}
-
 // ------------------------------------------------------------------ 取り込み
 
 /** 本文を上限つきで読む(上限を超えたら null)。全体を無制限にバッファしない。 */
@@ -577,10 +500,8 @@ async function handleIngest(request, env) {
   await env.DB.prepare("DELETE FROM watch WHERE detected_at < ?")
     .bind(cutoff.toISOString().slice(0, 19) + "Z")
     .run();
-  // 窓が明けたログイン失敗の記録を消す
-  await env.DB.prepare("DELETE FROM meta WHERE key LIKE 'lf:%' AND CAST(json_extract(value, '$.t0') AS INTEGER) < ?")
-    .bind(Math.floor(now.getTime() / 1000) - LOGIN_WINDOW_SEC)
-    .run();
+  // 旧版のログイン失敗の記録(パスワードのログインは廃止した)が残っていれば消す
+  await env.DB.prepare("DELETE FROM meta WHERE key LIKE 'lf:%'").run();
 
   const accepted = result.accepted.length + result.episodes.length + result.reports.length + result.watch.length;
   const lastIngest = {

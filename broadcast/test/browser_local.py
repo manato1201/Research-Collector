@@ -1,12 +1,12 @@
 """
-ResearchBroadcast サイトのブラウザ検証(ローカル)。Playwright(Chromium)で、ログイン・放送・ドロワー・ボード・
-カテゴリ・週次の図・状態・テーマ・スマホ幅・動きの軽減・ログアウトを確認する。
+ResearchBroadcast サイトのブラウザ検証(ローカル)。Playwright(Chromium)で、放送・ドロワー・ボード・
+カテゴリ・週次の図・状態・テーマ・スマホ幅・動きの軽減を確認する。
 
     # 前提: integration_local.py で記事と episode が入った、`wrangler dev --local` が動いている状態
+    #   かつ broadcast/.dev.vars に READ_REQUIRES_TOKEN=false(ローカルだけ、ログイン無しで開く。Access の代わり)
     #   pip install playwright && playwright install chromium
     python broadcast/test/browser_local.py
 
-ログインには broadcast/.dev.vars の VIEW_PASSWORD(または環境変数 BROADCAST_VIEW_PASSWORD)を使う。
 画面の保存先は環境変数 BROADCAST_SHOTS_DIR(未指定なら保存しない)。
 注意: ローカルのD1のボードに書き込む(本番には触れない)。
 """
@@ -18,18 +18,6 @@ BASE = os.environ.get("BROADCAST_BASE_URL", "http://127.0.0.1:8787")
 SHOTS = os.environ.get("BROADCAST_SHOTS_DIR")
 
 
-def _password():
-    v = os.environ.get("BROADCAST_VIEW_PASSWORD")
-    if v:
-        return v
-    text = open(os.path.join(os.path.dirname(HERE), ".dev.vars"), encoding="utf-8").read()
-    m = re.search(r"^VIEW_PASSWORD=(.+)$", text, re.M)
-    if not m:
-        sys.exit("VIEW_PASSWORD が見つかりません(broadcast/.dev.vars か BROADCAST_VIEW_PASSWORD)")
-    return m.group(1).strip()
-
-
-PW = _password()
 OUT = SHOTS
 if OUT:
     os.makedirs(OUT, exist_ok=True)
@@ -54,20 +42,16 @@ with sync_playwright() as p:
     page.on("console", lambda m: problems.append(f"{m.type}: {m.text}") if m.type in ("error", "warning") else None)
     page.on("pageerror", lambda e: problems.append(f"pageerror: {e}"))
 
-    # --- 未ログイン → ログイン画面
+    # --- ホーム(ローカルは READ_REQUIRES_TOKEN=false なので、ログイン無しで開ける)
     page.goto(BASE + "/")
-    page.wait_for_url(re.compile(r"/login"))
-    check("anonymous visit redirects to /login with next", "next=%2F" in page.url, page.url)
-    check("login form is shown", page.locator("form.login input[type=password]").count() == 1)
-    page.fill("#pw", "wrong-password")
-    page.click("button[type=submit]")
-    page.wait_for_selector(".login .err:not(:empty)")
-    check("wrong password shows an error", "違" in page.inner_text(".login .err"))
-    page.fill("#pw", PW)
-    page.click("button[type=submit]")
     page.wait_for_selector(".lanes")
-    check("login leads to the home (3 base lanes)", page.locator(".lanes").first.locator(".lane").count() == 3)
-    check("logout button is visible after login", page.locator("#logout-btn").is_visible())
+    check("home loads without any login (3 base lanes)", page.locator(".lanes").first.locator(".lane").count() == 3)
+    check("there is no login form or logout button", page.locator("form.login").count() == 0 and page.locator("#logout-btn").count() == 0)
+    page.goto(BASE + "/auth-required")
+    page.wait_for_selector("h1")
+    check("the auth-required page explains Cloudflare Access", "Cloudflare Access" in page.inner_text("#view"))
+    page.goto(BASE + "/")
+    page.wait_for_selector(".lanes")
     OUT and page.screenshot(path=os.path.join(OUT, "home_desktop.png"), full_page=True)
 
     # --- ホーム
@@ -810,15 +794,6 @@ with sync_playwright() as p:
 
     # --- 後片付け(ローカルのボードの行を戻す)
     page.evaluate(f"fetch('/api/board/{first_hash}', {{method: 'DELETE'}}).then(r => r.status)")
-
-    # --- ログアウト
-    page.goto(BASE + "/")
-    page.wait_for_selector(".lanes")
-    page.click("#logout-btn")
-    page.wait_for_url(re.compile(r"/login"))
-    check("logout returns to login", page.locator("form.login").count() == 1)
-    api = page.evaluate("fetch('/api/articles?limit=1').then(r => r.status)")
-    check("after logout the API is closed (401)", api == 401, api)
 
     csp_related = [x for x in problems if "Content Security Policy" in x or "Refused" in x]
     check("no CSP violations in console", not csp_related, csp_related[:3])

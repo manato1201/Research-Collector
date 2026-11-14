@@ -287,7 +287,7 @@ export async function setMark(article, patch, rerender) {
         : patch.remind_on ? `${patch.remind_on} に見直します` : "見直す日を外しました",
     );
   } catch (err) {
-    if (err instanceof AuthError) return navigate("/login");
+    if (err instanceof AuthError) return navigate("/auth-required");
     toast("更新できませんでした。時間をおいてやり直してください", true);
   }
 }
@@ -307,7 +307,7 @@ export async function setBoard(article, newState, note, rerender) {
     );
     refreshItemBadges(article.url_hash);
   } catch (err) {
-    if (err instanceof AuthError) return navigate("/login");
+    if (err instanceof AuthError) return navigate("/auth-required");
     toast("ボードを更新できませんでした。時間をおいてやり直してください", true);
   }
 }
@@ -395,7 +395,7 @@ export async function markAllRead(articles) {
     toast(`${targets.length}件を既読にしました`);
     return targets.length;
   } catch (err) {
-    if (err instanceof AuthError) navigate("/login");
+    if (err instanceof AuthError) navigate("/auth-required");
     else toast("既読にできませんでした。時間をおいてやり直してください", true);
     return 0;
   }
@@ -442,7 +442,7 @@ export function readButton(label, title, build) {
             if (!player.read({ title, chapters: payload })) toast("読み上げる内容がありません", true);
           })
           .catch((err) => {
-            if (err instanceof AuthError) navigate("/login");
+            if (err instanceof AuthError) navigate("/auth-required");
             else toast("読み上げの準備ができませんでした。時間をおいてやり直してください", true);
           })
           .finally(() => {

@@ -9,7 +9,7 @@
 | `POST /api/ingest`(記事・episode・失敗した収集元を受け取る)        | 実装・ローカルで検証済み                                  |
 | `GET /api/articles` / `/api/episodes` / `/api/status`              | 実装・ローカルで検証済み                                  |
 | ボード(読む・試す・保留)`/api/board`                               | 実装・ローカルで検証済み                                  |
-| ログイン(パスワード → 署名つきCookie)`/api/login`                  | 実装・ローカルで検証済み                                  |
+| 人の認証(Cloudflare Access・メールで 1 クリック)`/api/session` | 実装・ローカルで検証済み(Access の実環境は、設定後に確認) |
 | サイト(今日の放送・カテゴリ・ボード・週次特集・レポート・状態)     | 実装。実ブラウザ(Chromium)で確認済み                      |
 | 読み上げ(再生バー・章の送り・速度・声)                             | 実装。UI は実ブラウザで確認。**実際の音は未確認**(端末の声に依存) |
 | 週次レポート(NotebookLM のダイジェスト)`/api/reports`              | 実装・ローカルで検証済み。過去25本の取り込み(バックフィル)を用意 |
@@ -28,7 +28,7 @@
 | episode の JSON を R2 に保存(§4.3) | **D1 の `episodes` テーブル**に直接保存(1件 最大200KB、実測は約10KB以下) | R2 を使わない |
 | 音声は VOICEVOX(Containers)(§6) | **ブラウザの読み上げ(`speechSynthesis`)** + 再生バー(章の送り・速度・声の選択・一時停止) | 無料。声は端末による。音声ファイルは作らない |
 | 月次・先月の特集 | **「今日 / 今週 / 30日 / 先月」** と週次特集 | 先月は、カテゴリページの期間(前の月の1日〜末日)。月次の特集は作っていない |
-| Cloudflare Access(§8) | **パスワードでログイン**(署名つき Cookie)。Access は任意で後から重ねられる | Access の無料枠の条件が未確認 |
+| 人の認証(§8) | **Cloudflare Access**(メールで 1 クリック)。パスワードのログインは、個人・少人数での利用に過剰なので**廃止した**(2026-11-14) | Access の無料枠の条件が未確認 |
 | ボードのオフライン書き込み | なし(オンラインのみ) | Service Worker を使わない |
 | ティッカー・スクロールで展開する演出 | なし | 動きは「カウントアップ」「フェードイン」の2種類だけ |
 
@@ -49,7 +49,7 @@
 | `/reports` | 週次レポートの一覧(NotebookLM が、その週に集めた記事をカテゴリごとにまとめたダイジェスト) |
 | `/reports/<id>` | レポートの本文。章の目次・読み進めの進捗バー・レポートの読み上げ。Markdown を安全に描画する(HTML・画像・`javascript:` は無効) |
 | `/status` | 取り込みの状態・件数・収集元ごとの取得件数・失敗した収集元・統合された記事・NotebookLM への追加に失敗した記事。取り込みが止まっているとバッジを出す |
-| `/login` | パスワード入力 |
+| `/auth-required` | 認証が必要(Access を通っていないとき) |
 
 **ファイルの構成**(`public/`): `app.js`(入口・配線のみ)/ `router.js`(ルーター・ステータスバー)/ `store.js`(カテゴリ・API・状態)/ `util.js`(DOM・日付・動きの道具)/ `components.js`(記事の行・ドロワー・読み上げボタン・目次・速報)/ `page-*.js`(各ページ)/ `player.js`(再生バー)/ `radio-script.js`(ラジオ原稿の生成・読み上げの分割。DOM に依存せず、`npm test` で試験する)/ `sfx.js`(ジングル)/ `markdown.js`(レポートの描画)/ `keys.js`(キーボード操作)/ `sw.js` + `manifest.webmanifest`(PWA)。`test/modules.test.js` が、import と export の整合・循環参照を静的に確かめる(1つの名前の取りこぼしで、サイト全体が動かなくなるため)。
 
@@ -148,10 +148,10 @@ Content-Type: application/json
 | `GET /api/export?table=&offset=` | **Bearer のみ** | バックアップ用。テーブル(articles・episodes・reports・board・watch・prefs・meta・insights・marks)を1回200行までページで返す(`scripts/backup_d1.py` が使う) |
 | `GET /api/categories` | 同上 | 表示するカテゴリ(基本の3つ + 環境変数 `EXTRA_CATEGORIES` の追加分)。サイトはこれで画面を組み立てる |
 | `GET /api/status` | 同上 | 件数(URL単位)・カテゴリ別・`last_ingest`・`last_run`(直近の日次の実行。収集元別の取得件数を含む)・`last_success_at`・`failures`・最新の episode・レポートとウォッチの件数 |
-| `POST /api/login` / `POST /api/logout` / `GET /api/session` | なし(login は Origin 検査) | `VIEW_PASSWORD` を送ると `rb_session` Cookie(HttpOnly・SameSite=Strict・Secure・30日)を発行する 同じ IP から失敗が続くと(15分で8回)、**429**(`retry-after` つき)で、合っているパスワードでも断る。logout も Origin 検査あり |
+| `GET /api/session` | なし | 誰が入っているか(`authenticated`・`via`: `bearer` / `access`・`email`)を返す |
 | `GET /api/health` | なし | 生存確認のみ。データは返さない |
 
-認証は2通り: **機械**(GitHub Actions)は `Authorization: Bearer <INGEST_TOKEN>`、**人**(ブラウザ)は `VIEW_PASSWORD` でログインして得る Cookie。取り込みは Bearer のみ。`INGEST_TOKEN` も `VIEW_PASSWORD` も未設定なら、認証が要る経路は **全て拒否(503)** する。比較は SHA-256 にしてから `crypto.subtle.timingSafeEqual`(定数時間)。誤ったパスワードは 800ms 待ってから返す(総当たりを遅くするだけなので、**パスワードは長く**すること)。
+認証は2通り: **機械**(GitHub Actions)は `Authorization: Bearer <INGEST_TOKEN>`、**人**(ブラウザ)は **Cloudflare Access**(メールで 1 クリック。Worker が Access の JWT を検証し、メールアドレスで「誰か」を決める)。取り込みは Bearer のみ。`INGEST_TOKEN` も Access も未設定なら、認証が要る経路は **全て拒否(503)** する。Bearer の比較は SHA-256 にしてから `crypto.subtle.timingSafeEqual`(定数時間)。**パスワードのログイン(`/api/login`・Cookie・失敗回数の制限)は廃止した**(個人・少人数での利用に過剰なため)。
 
 ---
 
@@ -160,9 +160,9 @@ Content-Type: application/json
 ```bash
 cd broadcast
 npm install
-cp .dev.vars.example .dev.vars          # INGEST_TOKEN と VIEW_PASSWORD を好きな文字列に(.dev.vars はコミットされない)
+cp .dev.vars.example .dev.vars          # INGEST_TOKEN を好きな文字列に。ブラウザで開くときだけ READ_REQUIRES_TOKEN=false(.dev.vars はコミットされない)
 npx wrangler d1 migrations apply DB --local
-npx wrangler dev                        # http://127.0.0.1:8787  (ブラウザで開き、VIEW_PASSWORD でログイン)
+npx wrangler dev                        # http://127.0.0.1:8787  (ローカルは、そのままブラウザで開ける)
 # D1 はローカル。AI(解説の生成)だけは、設定("remote": true)でCloudflareの実物を使う(wrangler login が要る。--local を付けると AI は使えない)
 ```
 
@@ -222,7 +222,6 @@ npx wrangler login
 npx wrangler d1 create research-broadcast          # 出力の database_id を wrangler.jsonc の REPLACE_WITH_D1_DATABASE_ID に書く
 npx wrangler d1 migrations apply DB --remote
 npx wrangler secret put INGEST_TOKEN               # 対話で入力(機械用。長いランダム文字列)
-npx wrangler secret put VIEW_PASSWORD              # 対話で入力(人用。長いパスワード)
 npx wrangler deploy                                # https://research-broadcast.<アカウント>.workers.dev
 ```
 
@@ -237,15 +236,15 @@ gh secret set BROADCAST_INGEST_TOKEN   # INGEST_TOKEN と同じ値
 
 ### 公開範囲(設計 §8)
 
-- サイトの HTML/JS/CSS には**データが入っていない**。データは `/api/*` から、Bearer かログイン済みの Cookie でしか取れない。
+- サイトの HTML/JS/CSS には**データが入っていない**。データは `/api/*` から、Bearer か Cloudflare Access を通った人でしか取れない。
 - `READ_REQUIRES_TOKEN` を `"false"` にするのは、**Cloudflare Access で、この Worker の全ホスト名(`workers.dev` を含む)を保護した後だけ**。保護していない状態で `"false"` にすると、記事・ボードが誰にでも読み書きできる。
 - Access のサービス認証(`CF-Access-Client-Id` / `CF-Access-Client-Secret`)を使う場合は、Actions の Secret `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` を設定すれば、送信側が付けて送る。
 
-### 複数人で使う(Cloudflare Access)
+### 人のログイン(Cloudflare Access。個人・少人数)
 
-既定は 1 人用(Bearer とパスワード)。複数人で使うときは、ログインを **Cloudflare Access** に任せる(パスワードの共有をやめられる)。Worker は Access の JWT を検証して、メールアドレスで「誰か」を決める。
+人のログインは **Cloudflare Access** に任せる(パスワードは使わない。メールで届くコードを入れるだけ)。Worker は Access の JWT を検証して、メールアドレスで「誰か」を決める。**Access を設定するまで、人はサイトを読めない**(fail-closed。Bearer の機械だけが使える)。
 
-**ボード・ピン/見直す日・設定は、人ごとに別々**になる(`0008_owner.sql`。メールアドレスが持ち主)。記事・episode・レポートは全員で共通。Bearer(機械)とパスワードのログインは、従来どおり 1 つの持ち主(空)で動く。
+**ボード・ピン/見直す日・設定は、人ごとに別々**になる(`0008_owner.sql`。メールアドレスが持ち主)。記事・episode・レポートは全員で共通。Bearer(機械)は、従来どおり 1 つの持ち主(空)で動く。
 
 1. **先に migration を適用する**(新しいコードは `owner` 列を使うため、**デプロイより前**): `npx wrangler d1 migrations apply DB --remote`。既存のボード・ピン・設定は、持ち主「空」として残る。
 2. Zero Trust ダッシュボードで、この Worker を **Self-hosted application** として保護する(`workers.dev` を含む**全ホスト名**。ポリシーは使ってよい人のメール)。
@@ -258,12 +257,12 @@ gh secret set BROADCAST_INGEST_TOKEN   # INGEST_TOKEN と同じ値
 守っていること(`src/auth.js`・`test/access.test.js`):
 - **署名・発行者・宛先・期限を必ず検証**する(RS256 だけ。`none`・`HS256`・別の鍵での署名・中身のすり替えは拒否)。公開鍵(JWKS)は 1 時間キャッシュし、検証に失敗したときの取り直しは 1 分に 1 回まで。
 - **許可リストに無い人は 403**(Access を通っただけでは使えない。自動では許可しない)。`ACCESS_ALLOWED_EMAILS` が空なら全員 403(fail-closed)。
-- **不正な Access の JWT が付いているときは、Cookie や Bearer に落とさず 401**。
-- Access のクッキーはブラウザが自動で送るので、**書き込みは Origin が同じホストのときだけ**(パスワードのセッションと同じ CSRF 対策)。
+- **不正な Access の JWT が付いているときは、Bearer に落とさず 401**。
+- Access のクッキーはブラウザが自動で送るので、**書き込みは Origin が同じホストのときだけ**(CSRF 対策)。
 - **機械用のエンドポイント(`/api/ingest`・`/api/enrich`・`/api/export`)は Bearer のまま**。Access で入った人は使えない(Workers AI の無料枠とバックアップを守る)。
 - `READ_REQUIRES_TOKEN="false"` のときも、有効な Access の JWT があれば持ち主だけは決まる(無ければ空)。
 
-アプリ内の管理者の役割は作っていない: 収集元・収集の設定は、このサイトではなくリポジトリ側(GitHub Actions のコレクター)にあり、人ごとの設定(ウォッチワード・非表示の収集元)は各自のもの。パスワード方式を使わないなら `VIEW_PASSWORD` を設定しなければよい(ログインの入口が無くなる)。
+アプリ内の管理者の役割は作っていない: 収集元・収集の設定は、このサイトではなくリポジトリ側(GitHub Actions のコレクター)にあり、人ごとの設定(ウォッチワード・非表示の収集元)は各自のもの。
 
 ## 未確認
 

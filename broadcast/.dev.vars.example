@@ -1,5 +1,5 @@
 # ローカル開発用。コピーして .dev.vars にする(.dev.vars はコミットしない)
 # 機械(GitHub Actions)用: 取り込みの Bearer トークン
 INGEST_TOKEN=change-me-to-a-long-random-string
-# 人(ブラウザ)用: サイトのログインパスワード。長いものにする
-VIEW_PASSWORD=change-me-to-a-long-password
+# ブラウザで画面を開くときだけ、次の行の先頭の # を外す(ログイン無しで開ける。本番では設定しない。本番の人のログインは Cloudflare Access)。結合テスト(integration_local.py)は、この行を無効にして動かす
+# READ_REQUIRES_TOKEN=false

@@ -317,8 +317,8 @@ test("access: with no ACCESS_ALLOWED_EMAILS nobody gets in (fail closed)", async
   );
 });
 
-test("access: an invalid Access token does not fall back to the cookie session", async () => {
-  const env = baseEnv(newDb(), { VIEW_PASSWORD: "p".repeat(24) });
+test("access: an invalid Access token is refused (a stray cookie does not help)", async () => {
+  const env = baseEnv(newDb());
   const r = await call(env, "GET", "/api/board", {
     jwt: await sign({ aud: ["other"] }),
     cookie: "rb_session=whatever",
@@ -602,7 +602,7 @@ test("READ_REQUIRES_TOKEN=false: a valid Access token still picks the owner, oth
   );
 });
 
-test("legacy behaviour is unchanged: Bearer and the password session still work, as owner ''", async () => {
+test("machine access (Bearer) works without Access, as owner ''", async () => {
   const env = baseEnv(newDb(), {
     CF_ACCESS_TEAM_DOMAIN: "",
     CF_ACCESS_AUD: "",

@@ -814,28 +814,6 @@ details.acc li {
   font-size: 0.72rem;
 }
 
-/* ---------- ログイン ---------- */
-.login {
-  max-width: 22rem;
-  margin: 3rem auto;
-  display: flex;
-  flex-direction: column;
-  gap: 0.8rem;
-}
-.login input {
-  font: inherit;
-  padding: 0.55rem 0.8rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--surface);
-  color: var(--text);
-}
-.login .err {
-  color: var(--warn);
-  font-size: 0.82rem;
-  min-height: 1.2rem;
-}
-
 /* ---------- 動き(2種類だけ: フェードイン / カウントアップ) ---------- */
 .fade {
   animation: fadeUp 0.45s ease both;

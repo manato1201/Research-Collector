@@ -78,7 +78,7 @@ export async function render() {
   document.title = `${route ? route.r.title : "見つかりません"} — Research Broadcast`;
 
   try {
-    if (url.pathname !== "/login") {
+    if (url.pathname !== "/auth-required") {
       await Promise.all([loadCategories(), loadPrefs()]).catch((e) => (e instanceof AuthError ? Promise.reject(e) : undefined));
     }
     if (!route) pageNotFound(view);
@@ -86,9 +86,8 @@ export async function render() {
   } catch (err) {
     if (token !== renderToken) return; // 新しい遷移が始まっている
     if (err instanceof AuthError) {
-      if (url.pathname !== "/login") {
-        const next = url.pathname + url.search;
-        history.replaceState(null, "", `/login?next=${encodeURIComponent(next)}`);
+      if (url.pathname !== "/auth-required") {
+        history.replaceState(null, "", "/auth-required");
         return render();
       }
     } else {
@@ -106,7 +105,7 @@ export async function render() {
     }
   }
   if (token !== renderToken) return;
-  if (url.pathname !== "/login") renderStatusBar();
+  if (url.pathname !== "/auth-required") renderStatusBar();
   else document.getElementById("status-bar").replaceChildren();
 }
 
@@ -114,8 +113,4 @@ export function navigate(path) {
   history.pushState(null, "", path);
   window.scrollTo(0, 0);
   render().then(() => document.getElementById("view").focus({ preventScroll: true }));
-}
-
-export function updateAuthUi() {
-  document.getElementById("logout-btn").hidden = state.session.via !== "session";
 }

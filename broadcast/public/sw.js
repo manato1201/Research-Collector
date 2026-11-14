@@ -56,10 +56,8 @@ self.addEventListener("message", (event) => {
   }
 });
 
-// 取り込み・ログイン・書き出しなど、保存してはいけない API
+// 取り込み・書き出しなど、保存してはいけない API
 const NEVER_CACHE = [
-  "/api/login",
-  "/api/logout",
   "/api/ingest",
   "/api/export",
   "/api/session",

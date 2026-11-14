@@ -4,7 +4,7 @@
   //
   // 秘密情報はここに書かない(ローカルは .dev.vars):
   //   wrangler secret put INGEST_TOKEN    ... 機械(GitHub Actions)用。取り込みの Bearer トークン
-  //   wrangler secret put VIEW_PASSWORD   ... 人(ブラウザ)用。サイトのログインに使う長いパスワード
+  // 人(ブラウザ)のログインは Cloudflare Access(README「人のログイン」)。パスワードは使わない
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "research-broadcast",
   "main": "src/index.js",
@@ -23,7 +23,7 @@
     // "false" にすると /api/* の読み出し・ボードをログイン無しで使える。Cloudflare Access が、このWorkerの
     // 全ホスト名(workers.dev を含む)を保護していると確認できたときだけ変更すること。
     "READ_REQUIRES_TOKEN": "true",
-    // ---- 複数人で使う(Cloudflare Access)。README「複数人で使う」参照。3 つとも設定したときだけ有効。
+    // ---- 複数人で使う(Cloudflare Access)。README「人のログイン」参照。3 つとも設定したときだけ有効。
     // Zero Trust でこの Worker を「Self-hosted application」として保護し(workers.dev も含める)、
     //   CF_ACCESS_TEAM_DOMAIN = <チーム名>.cloudflareaccess.com
     //   CF_ACCESS_AUD         = そのアプリケーションの Application Audience (AUD) Tag

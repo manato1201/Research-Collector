@@ -89,7 +89,7 @@ export const state = {
   prefs: { watchwords: [], muted_sources: [], projects: [] },
   prefsLoaded: false,
   insights: new Map(), // url_hash -> {what, use, apply, source}
-  session: { authenticated: false, via: null, login_enabled: false },
+  session: { authenticated: false, via: null },
   status: null,
   statusAt: 0,
 };
@@ -224,18 +224,3 @@ export async function loadStatus(force = false) {
 }
 
 
-/** ログアウト時に、人ごとの状態を捨てる。 */
-export function resetSessionState() {
-  state.session = { ...state.session, authenticated: false, via: null };
-  state.board = new Map();
-  state.boardLoaded = false;
-  state.marks = new Map();
-  state.markList = [];
-  state.marksLoaded = false;
-  state.categoriesLoaded = false;
-  state.prefs = { watchwords: [], muted_sources: [], projects: [] };
-  state.prefsLoaded = false;
-  state.insights = new Map();
-  EXTRA = [];
-  state.status = null;
-}

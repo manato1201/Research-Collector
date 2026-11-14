@@ -11,9 +11,9 @@
 // 構成: util.js(道具)/ store.js(カテゴリ・API・状態)/ components.js(共通部品)/ router.js(ルーター)/
 //       page-*.js(各ページ)/ player.js(読み上げ)/ markdown.js(レポートの描画)。このファイルは入口で、配線だけを行う。
 
-import { api, resetSessionState, state } from "./store.js";
+import { api, state } from "./store.js";
 import { closeDrawer } from "./components.js";
-import { beforeRender, getLastRendered, navigate, registerRoutes, render, updateAuthUi } from "./router.js";
+import { beforeRender, getLastRendered, navigate, registerRoutes, render } from "./router.js";
 import * as player from "./player.js";
 import { pageHome } from "./page-home.js";
 import { pageCategory } from "./page-category.js";
@@ -27,7 +27,7 @@ import { getHideRead, setHideRead } from "./store.js";
 import { pageWeekly } from "./page-weekly.js";
 import { pageReport, pageReports } from "./page-reports.js";
 import { pageStatus } from "./page-status.js";
-import { pageLogin } from "./page-login.js";
+import { pageAuthRequired } from "./page-auth.js";
 
 // ルート表(ページのモジュールを、ここで結びつける)
 registerRoutes([
@@ -42,7 +42,7 @@ registerRoutes([
   { re: /^\/reports$/, nav: "reports", title: "レポート", run: (v) => pageReports(v) },
   { re: /^\/reports\/(digest:\d{4}-\d{2}-\d{2})$/, nav: "reports", title: "レポート", run: (v, m) => pageReport(v, m[1]) },
   { re: /^\/status$/, nav: "status", title: "状態", run: (v) => pageStatus(v) },
-  { re: /^\/login$/, nav: null, title: "ログイン", run: (v, _m, q) => pageLogin(v, q) },
+  { re: /^\/auth-required$/, nav: null, title: "認証が必要", run: (v) => pageAuthRequired(v) },
 ]);
 
 // 画面を描き直す前に、ドロワーを閉じる
@@ -147,26 +147,11 @@ document.getElementById("theme-btn").addEventListener("click", () => {
   }
 });
 
-document.getElementById("logout-btn").addEventListener("click", async () => {
-  try {
-    await api("/api/logout", { method: "POST" });
-  } catch {
-    /* Cookie が既に無効でも続ける */
-  }
-  resetSessionState();
-  player.stop();
-  // 端末に保存した API の応答(記事・ボード等)も消す
-  navigator.serviceWorker?.controller?.postMessage({ type: "clear" });
-  updateAuthUi();
-  navigate("/login");
-});
-
 (async () => {
   try {
     state.session = await api("/api/session");
   } catch {
     /* 取得できなくても、ページ側の 401 処理で扱う */
   }
-  updateAuthUi();
   render();
 })();

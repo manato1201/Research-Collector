@@ -930,7 +930,7 @@ flowchart LR
 | 送信 | `post_ingest.py` が、記事に加えて `episodes` と `failures`(取得に失敗した収集元。20件まで)を最初のバッチに載せる。受け口の契約は `broadcast/README.md` |
 | サイト | `broadcast/public/`(依存なしの SPA)。`/` 今日の放送 / `/c/<カテゴリ>` / `/board` / `/weekly` / `/status` / `/login`。HTML 文字列を組み立てず、リンクは http(s) だけ。CSP は `_headers` |
 | ボード | 記事のドロワーから「読む / 試す / 保留 / 未読」とメモ(200字)。D1 の `board`。書き込みは Cookie のとき Origin も検査する |
-| 認証 | 機械は Bearer(`INGEST_TOKEN`)、人は `VIEW_PASSWORD` でログインして署名つき Cookie(HttpOnly・SameSite=Strict・Secure・30日)。取り込みは Bearer のみ |
+| 認証 | 機械は Bearer(`INGEST_TOKEN`)、人は Cloudflare Access(許可したメールで 1 クリック。JWT を検証し、未設定なら閉じる)。パスワードのログインは個人・少人数の利用に過剰なので廃止した(2026-11)。取り込みは Bearer のみ |
 | 読み上げ | ブラウザの `speechSynthesis`(無料。声は端末による)。音声ファイルは作らない |
 | 状態の見える化 | 最終更新の相対時刻と、20時間以上取り込みが無いときの「止まっている可能性」バッジ。失敗した収集元の一覧 |
 

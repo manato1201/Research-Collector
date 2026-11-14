@@ -47,7 +47,6 @@ def _dev_var(name, default=None):
 
 
 TOKEN = _token()
-VIEW_PASSWORD = _dev_var("VIEW_PASSWORD")
 results = []
 
 
@@ -566,59 +565,11 @@ check("an injection-style search returns only matching rows, not everything", s_
 s_, r_, hdr = call_raw("GET", "/api/health")
 check("API responses carry X-Content-Type-Options: nosniff", (hdr.get("x-content-type-options") or hdr.get("X-Content-Type-Options")) == "nosniff", dict(hdr))
 
-# --- ログイン(人)・Cookie・CSRF
-if VIEW_PASSWORD:
-    s, r, _ = call_raw("GET", "/api/session")
-    check("session: anonymous", s == 200 and r["authenticated"] is False and r["login_enabled"] is True, r)
-    origin = {"origin": BASE}
-    s, r, _ = call_raw("POST", "/api/login", {"password": "wrong"}, headers=origin)
-    check("login with wrong password -> 401", s == 401 and r["error"] == "wrong_password", (s, r))
-    s, r, _ = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers={"origin": "https://evil.example"})
-    check("login from a foreign origin -> 403", s == 403, (s, r))
-    s, r, hdr = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers=origin)
-    cookie = hdr.get("Set-Cookie") or hdr.get("set-cookie") or ""
-    check("login ok sets HttpOnly SameSite=Strict cookie", s == 200 and "rb_session=" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie, cookie[:80])
-    # 試行回数の制限: 同じ IP(ここでは、偽の cf-connecting-ip)から失敗が続くと、合っているパスワードでも 429
-    import random
-    run_ip = f"198.18.{random.randint(1, 250)}.{random.randint(1, 250)}"  # 実行のたびに別の IP(前回の制限の記録が残っていても影響しない)
-    fake = {"origin": BASE, "cf-connecting-ip": run_ip}
-    codes = [call_raw("POST", "/api/login", {"password": "wrong-" + str(i)}, headers=fake)[0] for i in range(8)]
-    s9, r9, h9 = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers=fake)
-    check("login: 8 failures from one IP -> then 429 even with the right password", codes == [401] * 8 and s9 == 429, (codes, s9))
-    check("login: the lockout says when to retry", int(h9.get("Retry-After") or h9.get("retry-after") or 0) > 0, dict(h9))
-    s10, _, _ = call_raw("POST", "/api/login", {"password": VIEW_PASSWORD}, headers={"origin": BASE, "cf-connecting-ip": "198.19.0.1"})
-    check("login: another IP is not locked out", s10 == 200, s10)
-    s11, _, _ = call_raw("POST", "/api/logout", None, headers={"origin": "https://evil.example"})
-    check("logout from a foreign origin -> 403", s11 == 403, s11)
-    jar = {"cookie": cookie.split(";")[0]}
-    s, r, _ = call_raw("GET", "/api/session", headers=jar)
-    check("session: authenticated via cookie", r.get("authenticated") is True and r.get("via") == "session", r)
-    check("cookie can read /api/articles", call_raw("GET", "/api/articles?limit=1", headers=jar)[0] == 200)
-    check("cookie cannot ingest (bearer only)", call_raw("POST", "/api/ingest", {"schema": 1, "articles": []}, headers=jar)[0] == 401)
-    check("cookie cannot export (bearer only)", call_raw("GET", "/api/export?table=articles", headers=jar)[0] == 401)
-    s, r, _ = call_raw("PUT", "/api/prefs/watchwords", {"value": ["x1y2z3"]}, headers={**jar, **origin})
-    check("cookie + same origin can save prefs", s == 200, (s, r))
-    s, r, _ = call_raw("PUT", "/api/prefs/watchwords", {"value": ["x1y2z3"]}, headers={**jar, "origin": "https://evil.example"})
-    check("cookie + foreign origin cannot save prefs (CSRF)", s == 403, (s, r))
-    call("PUT", "/api/prefs/watchwords", {"value": []})
-    s, r, _ = call_raw("PUT", f"/api/marks/{HASH}", {"pinned": True}, headers={**jar, **origin})
-    check("cookie + same origin can write marks; foreign origin / no Origin cannot (CSRF)",
-          s == 200 and call_raw("PUT", f"/api/marks/{HASH}", {"pinned": False}, headers={**jar, "origin": "https://evil.example"})[0] == 403
-          and call_raw("PUT", f"/api/marks/{HASH}", {"pinned": False}, headers=jar)[0] == 403, (s, r))
-    call("DELETE", f"/api/marks/{HASH}")
-    check("cookie can read marks and tidy", call_raw("GET", "/api/marks", headers=jar)[0] == 200 and call_raw("GET", "/api/tidy?limit=1", headers=jar)[0] == 200)
-    s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, **origin})
-    check("cookie + same origin can write board", s == 200, (s, r))
-    s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers={**jar, "origin": "https://evil.example"})
-    check("cookie + foreign origin cannot write board (CSRF)", s == 403, (s, r))
-    s, r, _ = call_raw("PUT", f"/api/board/{HASH}", {"state": "reading"}, headers=jar)
-    check("cookie without Origin cannot write board", s == 403, (s, r))
-    tail = "aa" if not jar["cookie"].endswith("aa") else "bb"
-    tampered = {"cookie": jar["cookie"][:-2] + tail}
-    check("tampered cookie -> 401", call_raw("GET", "/api/articles?limit=1", headers=tampered)[0] == 401)
-    call("DELETE", f"/api/board/{HASH}")
-else:
-    print("SKIP login checks (VIEW_PASSWORD not set)")
+# --- 誰が入っているか(人のログインは Cloudflare Access。パスワードのログインは廃止した)
+s, r, _ = call_raw("GET", "/api/session")
+check("session: anonymous is not authenticated", s == 200 and r["authenticated"] is False and r["via"] is None, r)
+check("password login is gone: /api/login is not a route", call_raw("POST", "/api/login", {"password": "x"}, headers={"origin": BASE})[0] in (404, 405))
+check("a stray session cookie does not authenticate", call_raw("GET", "/api/articles?limit=1", headers={"cookie": "rb_session=x"})[0] == 401)
 
 print("\nALL PASS" if all(results) else f"\n{results.count(False)} FAILED")
 sys.exit(0 if all(results) else 1)

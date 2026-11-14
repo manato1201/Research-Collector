@@ -3,6 +3,8 @@
 `IMPROVEMENT_DESIGN_2026-10.md` / `ResearchBroadcast_DESIGN.md` の「外部リソースの追補」X2(security-audit-skill)の進め方に沿って、`broadcast/` の認証・取り込み API・フロントを点検した。
 結果は **確定 / 要確認 / 却下** で記録する。
 
+> **2026-11 追記**: 閲覧パスワードのログイン(VIEW_PASSWORD・セッション Cookie・失敗回数の制限 `src/throttle.js`)は、個人・少人数の利用に過剰なので廃止した。人の認証は Cloudflare Access のみ。下の S2・S5・S6 と、ログインの制限(429)の記述は、廃止により対象外(当時の記録として残す)。
+
 ## 進め方(6 段階)
 
 | 段階       | やったこと                                                                                                                                                                                                       |

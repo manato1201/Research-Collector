@@ -206,7 +206,7 @@ export async function pageTidy(view, params) {
 
   // ---- 操作
   const fail = (err) => {
-    if (err instanceof AuthError) return navigate("/login");
+    if (err instanceof AuthError) return navigate("/auth-required");
     toast("更新できませんでした。時間をおいてやり直してください", true);
   };
   const push = (entry) => {
