@@ -1,23 +1,29 @@
-# Research-Collector 学習資料(簡易版)
+# Research-Collector 学習資料(保守・拡張の実務編)
 
-保守・拡張の詳しい資料は**未作成**です。基礎は [講義](../lecture/index.md)(第 0〜2 回)。既存の資料: [DOCUMENT.md](../../DOCUMENT.md)・[HANDSON.md](../../HANDSON.md)・[SETUP.md](../../SETUP.md)・[LOCAL_EXTRA_GUIDE.md](../../LOCAL_EXTRA_GUIDE.md)。旧 README は [readme-detail.md](../reference/readme-detail.md)。
+このフォルダは、**このシステムを直す・足す人**のための資料です。基礎から順に学ぶ講義は [../lecture/index.md](../lecture/index.md)(第 0〜2 回)。既存の資料: [DOCUMENT.md](../../DOCUMENT.md)・[HANDSON.md](../../HANDSON.md)・[SETUP.md](../../SETUP.md)。旧 README は [readme-detail.md](../reference/readme-detail.md)。
 
-## コードの地図
+| # | 資料 | いつ読むか |
+|---|---|---|
+| 1 | [全体像](01-overview.md) | 1 日の流れ・Actions・データの置き場所・環境変数 |
+| 2 | [コードの読み方](02-code-tour.md) | どのファイルから読むか |
+| 3 | [内側のしくみ](03-internals.md) | 収集の隔離・重複・記録・エピソード・レポート・通知 |
+| 4 | [拡張のレシピ](04-extend.md) | 収集元・分類・通知・ノートブックを**足したい** |
+| 5 | [テストの書き方と実行](05-testing.md) | テストを回す・足す・文書の検査 |
+| 6 | [トラブルと保守](06-troubleshooting-maintenance.md) | 動かない・**認証の期限**・既知の問題・定期の保守 |
+| – | [用語集](glossary.md) | 分からない言葉が出た |
 
-| 場所 | 役割 |
+## 最初の 15 分
+
+1. `python -m unittest discover tests` を通す(ネットワーク不要・標準ライブラリ)。
+2. [構成図](../diagrams/architecture.svg)を見ながら、[全体像](01-overview.md)を読む。
+3. `nbklm/semantic_dedup.py` と `classifier.py` を、講義[第 1・2 回](../lecture/01-semantic-dedup.md)と並べて読む。
+
+## 目的別の近道
+
+| やりたいこと | 読む場所 |
 |---|---|
-| `main.py`(約 360 行) | 収集の全体の流れ |
-| `collectors/` | ソースごとの収集(Zenn・Qiita・公式ブログ・arXiv・Semantic Scholar・CEDEC・変更履歴 ほか) |
-| `nbklm/semantic_dedup.py`・`classifier.py` | 意味の重複・分類(標準ライブラリだけ) |
-| `nbklm/client.py`・`episodes.py`・`digest.py` | NotebookLM への追加・エピソード・ダイジェスト |
-| `scripts/` | 通知・取り込み・サイト生成(`build_site.py`)・レポートの投稿 |
-| `broadcast/` | ResearchBroadcast(Cloudflare 上の別システム。Node のテストあり) |
-| `tests/` | `python -m unittest discover tests`(ネットワーク不要) |
-
-## 注意・既知の点(講義の作成中に読んで見つけたもの。コードは変えていない)
-
-1. **類似度のしきい値(0.95)は、実データで決めた値**で、OS 別の別記事(0.94)を分けるぎりぎりの位置。タイトルの語が増えると、同じ話題でも 0.95 に届かず、**統合されない**ことがある(見逃しは許容する設計)。
-2. **分類のキーワードの表は手書き**。新しい用語は、表に足さないと拾えない。「どれでもない」が増えたら見直す。
-3. **日本語の分類精度は未検証**(`agreement_report()` で自データから測る前提)。
-4. NotebookLM への追加は、**非公式の認証**(ブラウザの認証情報の更新が要る)に依存する。更新が止まると、追加が止まる(`refresh_auth.*`・タスクスケジューラ)。
-5. 作業ツリーに、この文書とは別の**未コミットの変更**(`ResearchBroadcast_DESIGN.md`・`broadcast/` ほか)がある。
+| 収集元(RSS・API)を足す | [4 拡張](04-extend.md) レシピ 1 |
+| 分類のキーワードを直す | [4 拡張](04-extend.md) レシピ 2・講義[第 2 回](../lecture/02-classifier.md) |
+| 通知・送信を足す | [4 拡張](04-extend.md) レシピ 4 |
+| 追加が止まった | [6 トラブル](06-troubleshooting-maintenance.md)「認証」 |
+| README が bot に上書きされる | [6 トラブル](06-troubleshooting-maintenance.md)「README のマーカー」 |
