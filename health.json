@@ -1,33 +1,29 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-11-16T09:08:12Z",
-    "collected": 132,
-    "new": 18,
-    "notebooklm_ok": 17,
+    "run_at": "2026-11-16T21:14:50Z",
+    "collected": 143,
+    "new": 21,
+    "notebooklm_ok": 33,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
-    "notebooks_total": 105,
-    "unclassified": 3,
-    "merged": 5,
+    "notebooks_total": 106,
+    "unclassified": 4,
+    "merged": 0,
     "by_source": {
-      "Zenn/Qiita": 51,
+      "Zenn/Qiita": 54,
       "Unity/UE": 10,
       "CEDEC": 25,
-      "Papers": 23,
-      "ReleaseNotes": 13,
+      "Papers": 32,
+      "ReleaseNotes": 12,
       "X posts": 0,
       "GameMedia": 10
     },
-    "failed_sources": 4,
+    "failed_sources": 6,
     "source_failures": [
       {
         "source": "semantic_scholar:developer documentation usage behavior",
-        "error": "HTTP 429 after 5 attempts"
-      },
-      {
-        "source": "semantic_scholar:video tutorial software learning",
         "error": "HTTP 429 after 5 attempts"
       },
       {
@@ -35,8 +31,20 @@
         "error": "HTTP 429 after 5 attempts"
       },
       {
-        "source": "semantic_scholar",
-        "error": "rate limited (HTTP 429): 6 queries skipped"
+        "source": "semantic_scholar:tutorial maintenance technical debt",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:RAG retrieval augmented generation docum",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:LLM tutorial generation step by step",
+        "error": "HTTP 429 after 5 attempts"
+      },
+      {
+        "source": "semantic_scholar:Houdini procedural generation learning",
+        "error": "HTTP 429 after 5 attempts"
       }
     ],
     "watch_new": 0
