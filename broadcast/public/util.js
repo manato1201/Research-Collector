@@ -93,7 +93,14 @@ export function toast(message, isError = false) {
     h("span", null, message),
   );
   box.append(el);
-  setTimeout(() => el.remove(), 3800);
+  setTimeout(() => leaveToast(el), 3800);
+}
+
+/** 消えるときは、短くフェードしてから外す(動きを減らす設定では、すぐ外す)。 */
+function leaveToast(el) {
+  if (reduceMotion) return el.remove();
+  el.classList.add("out");
+  setTimeout(() => el.remove(), 160); // --dur-instant(120ms)+余裕
 }
 
 export function countUp(root) {

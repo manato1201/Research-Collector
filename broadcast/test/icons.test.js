@@ -62,3 +62,18 @@ test("the icon section adds no infinite animation and every animation is guarded
   const rest = outside.replace(keyframes, "");
   assert.ok(!/animation\s*:/.test(rest), "animation は no-preference の中だけ");
 });
+
+test("the open/leave motion section is one-shot, guarded by reduced motion, and moves only transform and opacity", () => {
+  const section = css.slice(css.indexOf("開く・出る・増える"));
+  assert.ok(section.length > 300);
+  assert.ok(!/infinite/.test(section), "新しい無限ループは足さない");
+  const at = section.indexOf("@keyframes");
+  const guarded = section.slice(section.indexOf("@media (prefers-reduced-motion: no-preference)"), at);
+  assert.ok(/animation\s*:/.test(guarded));
+  assert.ok(!/animation\s*:/.test(section.replace(guarded, "").slice(0, section.replace(guarded, "").indexOf("@keyframes"))), "animation は no-preference の中だけ");
+  for (const body of section.slice(at).matchAll(/\{([^{}]*)\}/g)) {
+    for (const prop of body[1].split(";").map((d) => d.split(":")[0].trim()).filter(Boolean)) {
+      assert.ok(["transform", "opacity"].includes(prop), `動かしてはいけない性質: ${prop}`);
+    }
+  }
+});

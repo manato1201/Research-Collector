@@ -2117,3 +2117,51 @@ body[data-offline="1"] .status-bar::after {
     transform: scale(1);
   }
 }
+
+/* ---------- 開く・出る・増える(ドロワー・トースト・バッジ。DESIGN.md「動き」4) ----------
+   触れて何かが起きたとき、「どこに何が現れたか」を示す 1 回きりの動き。無限ループなし。
+   使う性質は transform と opacity。時間とイージングはトークン。動きを減らす設定では、すべて止まる。 */
+@media (prefers-reduced-motion: no-preference) {
+  /* 記事の詳細(ドロワー)は右から入り、背景の幕はやわらかく暗くなる(閉じるときは、すぐ消える) */
+  .drawer {
+    animation: open-slide var(--dur-open) var(--ease-out) both;
+  }
+  .drawer-backdrop {
+    animation: open-fade var(--dur-open) var(--ease-out) both;
+  }
+  /* トーストは下から現れ、時間が来たら短く薄れて消える(積んだとき、新しいものがどれか分かる) */
+  .toast {
+    animation: fadeUp var(--dur-open) var(--ease-out) both;
+  }
+  .toast.out {
+    animation: out-fade var(--dur-instant) var(--ease-in) forwards;
+  }
+  /* 一覧の行に、ボード・ピンのバッジが増えたとき、ぽんと現れる */
+  .badge.pop {
+    animation: ico-pop var(--dur-open) var(--ease-out);
+  }
+}
+@keyframes open-slide {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes open-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes out-fade {
+  to {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}

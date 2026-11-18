@@ -316,13 +316,16 @@ export async function setBoard(article, newState, note, rerender) {
 export function refreshItemBadges(hash) {
   const board = state.board.get(hash);
   for (const li of document.querySelectorAll(`#view .item[data-hash="${hash}"]`)) {
+    const had = new Set([...li.querySelectorAll(".badge.state, .badge.mark")].map((b) => b.textContent));
     li.querySelector(".badge.state")?.remove();
     li.querySelectorAll(".badge.mark").forEach((b) => b.remove());
     li.classList.toggle("is-read", board?.state === "read");
-    if (board && board.state !== "read") {
-      li.querySelector(".item-meta")?.append(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
-    }
-    li.querySelector(".item-meta")?.append(...markBadges(hash));
+    const added = [];
+    if (board && board.state !== "read") added.push(h("span", { class: "badge state" }, BOARD_LABELS[board.state]));
+    added.push(...markBadges(hash));
+    li.querySelector(".item-meta")?.append(...added);
+    // いま増えたバッジだけ、ぽんと現れる(変わっていないバッジは動かさない)
+    for (const b of added) if (!had.has(b.textContent)) b.classList.add("pop");
   }
 }
 
