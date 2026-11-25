@@ -1,16 +1,16 @@
 {
   "daily": {
     "status": "ok",
-    "run_at": "2026-11-25T09:04:34Z",
+    "run_at": "2026-11-25T21:03:52Z",
     "collected": 110,
-    "new": 24,
-    "notebooklm_ok": 33,
+    "new": 19,
+    "notebooklm_ok": 23,
     "notebooklm_skip": 0,
     "notebooklm_errors": 0,
     "notebooks_deleted": 0,
     "notebooks_total": 111,
-    "unclassified": 4,
-    "merged": 2,
+    "unclassified": 2,
+    "merged": 0,
     "by_source": {
       "Zenn/Qiita": 52,
       "Unity/UE": 10,
